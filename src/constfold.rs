@@ -39,7 +39,10 @@ fn fold_expr(expr: &mut ast::Expression) {
     use ast::BinOp::*;
     match expr.expr {
         ast::Expr::BinOp {
-            ref mut left, op, ref mut right, ..
+            ref mut left,
+            op,
+            ref mut right,
+            ..
         } => {
             fold_expr(left);
             fold_expr(right);
@@ -50,8 +53,20 @@ fn fold_expr(expr: &mut ast::Expression) {
                         Add => left.wrapping_add(right),
                         Sub => left.wrapping_sub(right),
                         Mul => left.wrapping_mul(right),
-                        Div => left / right, // TODO: protect agains division by zero
-                        Rem => left % right, // TODO: check correct behavior with negative operands
+                        Div => {
+                            if let Some(result) = left.checked_div(right) {
+                                result
+                            } else {
+                                return;
+                            }
+                        }
+                        Rem => {
+                            if let Some(result) = left.checked_rem(right) {
+                                result
+                            } else {
+                                return;
+                            }
+                        }
                         And => left & right,
                         Or => left | right,
                         Xor => left ^ right,
@@ -64,7 +79,7 @@ fn fold_expr(expr: &mut ast::Expression) {
                     };
                     expr.expr = ast::Expr::I32Const(result);
                 }
-                _ => ()
+                _ => (),
             }
         }
         ast::Expr::I32Const(_) | ast::Expr::Variable { .. } => (),
