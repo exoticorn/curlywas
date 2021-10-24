@@ -19,7 +19,21 @@ pub fn parse(s: &str) -> Result<ast::Script, VerboseError<&str>> {
 
 fn script(s: &str) -> IResult<ast::Script> {
     let (s, items) = many0(top_level_item)(s)?;
-    Ok((s, ast::Script { items }))
+    let mut global_vars = vec![];
+    let mut functions = vec![];
+    for item in items {
+        match item {
+            ast::TopLevelItem::GlobalVar(v) => global_vars.push(v),
+            ast::TopLevelItem::Function(f) => functions.push(f),
+        }
+    }
+    Ok((
+        s,
+        ast::Script {
+            global_vars,
+            functions,
+        },
+    ))
 }
 
 fn top_level_item(s: &str) -> IResult<ast::TopLevelItem> {
@@ -88,7 +102,7 @@ fn block(s: &str) -> IResult<ast::Block> {
         s,
         ast::Block {
             statements,
-            final_expression,
+            final_expression: final_expression.map(|e| e.into()),
         },
     ))
 }
@@ -96,22 +110,25 @@ fn block(s: &str) -> IResult<ast::Block> {
 fn statement(s: &str) -> IResult<ast::Statement> {
     alt((
         map(local_var, ast::Statement::LocalVariable),
-        map(
-            terminated(expression, ws(char(';'))),
-            ast::Statement::Expression,
-        ),
+        map(terminated(expression, ws(char(';'))), |e| {
+            ast::Statement::Expression(e.into())
+        }),
         map(
             terminated(block_expression, not(peek(ws(char('}'))))),
-            ast::Statement::Expression,
+            |e| ast::Statement::Expression(e.into()),
         ),
         map(
             terminated(
-                pair(mem_location, preceded(ws(char('=')), expression)),
+                pair(
+                    mem_location,
+                    ws(pair(position, preceded(char('='), expression))),
+                ),
                 ws(char(';')),
             ),
-            |(mem_location, value)| ast::Statement::Poke {
+            |(mem_location, (position, value))| ast::Statement::Poke {
+                position,
                 mem_location,
-                value,
+                value: value.into(),
             },
         ),
     ))(s)
@@ -131,7 +148,7 @@ fn local_var(s: &str) -> IResult<ast::LocalVariable> {
             position,
             name: name,
             type_,
-            value,
+            value: value.map(|v| v.into()),
         },
     ))
 }
@@ -151,31 +168,31 @@ fn mem_location(s: &str) -> IResult<ast::MemoryLocation> {
         ast::MemoryLocation {
             position,
             size,
-            left,
-            right,
+            left: left.into(),
+            right: right.into(),
         },
     ))
 }
 
-fn expression(s: &str) -> IResult<ast::Expression> {
+fn expression(s: &str) -> IResult<ast::Expr> {
     expression_cmp(s)
 }
 
-fn expression_atom(s: &str) -> IResult<ast::Expression> {
+fn expression_atom(s: &str) -> IResult<ast::Expr> {
     alt((
         branch_if,
         block_expression,
         map(
             separated_pair(pair(ws(position), identifier), ws(tag(":=")), expression),
-            |((position, name), value)| ast::Expression::LocalTee {
+            |((position, name), value)| ast::Expr::LocalTee {
                 position,
                 name: name,
-                value: Box::new(value),
+                value: Box::new(value.into()),
             },
         ),
-        map(integer, |v| ast::Expression::I32Const(v)),
+        map(integer, |v| ast::Expr::I32Const(v)),
         map(ws(pair(position, identifier)), |(position, name)| {
-            ast::Expression::Variable {
+            ast::Expr::Variable {
                 position,
                 name: name,
             }
@@ -184,7 +201,7 @@ fn expression_atom(s: &str) -> IResult<ast::Expression> {
     ))(s)
 }
 
-fn branch_if(s: &str) -> IResult<ast::Expression> {
+fn branch_if(s: &str) -> IResult<ast::Expr> {
     let (s, position) = ws(position)(s)?;
     let (s, _) = tag("branch_if")(s)?;
     cut(move |s| {
@@ -194,16 +211,16 @@ fn branch_if(s: &str) -> IResult<ast::Expression> {
 
         Ok((
             s,
-            ast::Expression::BranchIf {
+            ast::Expr::BranchIf {
                 position,
-                condition: Box::new(condition),
+                condition: Box::new(condition.into()),
                 label: label,
             },
         ))
     })(s)
 }
 
-fn expression_product(s: &str) -> IResult<ast::Expression> {
+fn expression_product(s: &str) -> IResult<ast::Expr> {
     let (s, mut init) = map(expression_atom, Some)(s)?;
     fold_many0(
         pair(
@@ -218,17 +235,17 @@ fn expression_product(s: &str) -> IResult<ast::Expression> {
                 '%' => ast::BinOp::Rem,
                 _ => unreachable!(),
             };
-            ast::Expression::BinOp {
+            ast::Expr::BinOp {
                 position,
                 op,
-                left: Box::new(left),
-                right: Box::new(right),
+                left: Box::new(left.into()),
+                right: Box::new(right.into()),
             }
         },
     )(s)
 }
 
-fn expression_sum(s: &str) -> IResult<ast::Expression> {
+fn expression_sum(s: &str) -> IResult<ast::Expr> {
     let (s, mut init) = map(expression_product, Some)(s)?;
     fold_many0(
         pair(
@@ -242,17 +259,17 @@ fn expression_sum(s: &str) -> IResult<ast::Expression> {
             } else {
                 ast::BinOp::Sub
             };
-            ast::Expression::BinOp {
+            ast::Expr::BinOp {
                 position,
                 op,
-                left: Box::new(left),
-                right: Box::new(right),
+                left: Box::new(left.into()),
+                right: Box::new(right.into()),
             }
         },
     )(s)
 }
 
-fn expression_bit(s: &str) -> IResult<ast::Expression> {
+fn expression_bit(s: &str) -> IResult<ast::Expr> {
     let (s, mut init) = map(expression_sum, Some)(s)?;
     fold_many0(
         pair(
@@ -267,17 +284,17 @@ fn expression_bit(s: &str) -> IResult<ast::Expression> {
                 '^' => ast::BinOp::Xor,
                 _ => unreachable!(),
             };
-            ast::Expression::BinOp {
+            ast::Expr::BinOp {
                 position,
                 op,
-                left: Box::new(left),
-                right: Box::new(right),
+                left: Box::new(left.into()),
+                right: Box::new(right.into()),
             }
         },
     )(s)
 }
 
-fn expression_cmp(s: &str) -> IResult<ast::Expression> {
+fn expression_cmp(s: &str) -> IResult<ast::Expr> {
     let (s, mut init) = map(expression_bit, Some)(s)?;
     fold_many0(
         pair(
@@ -305,21 +322,21 @@ fn expression_cmp(s: &str) -> IResult<ast::Expression> {
                 ">" => ast::BinOp::Gt,
                 _ => unreachable!(),
             };
-            ast::Expression::BinOp {
+            ast::Expr::BinOp {
                 position,
                 op,
-                left: Box::new(left),
-                right: Box::new(right),
+                left: Box::new(left.into()),
+                right: Box::new(right.into()),
             }
         },
     )(s)
 }
 
-fn block_expression(s: &str) -> IResult<ast::Expression> {
+fn block_expression(s: &str) -> IResult<ast::Expr> {
     loop_(s)
 }
 
-fn loop_(s: &str) -> IResult<ast::Expression> {
+fn loop_(s: &str) -> IResult<ast::Expr> {
     let (s, position) = ws(position)(s)?;
     let (s, _) = tag("loop")(s)?;
     cut(move |s| {
@@ -328,10 +345,10 @@ fn loop_(s: &str) -> IResult<ast::Expression> {
 
         Ok((
             s,
-            ast::Expression::Loop {
+            ast::Expr::Loop {
                 position,
                 label: label,
-                block: Box::new(block),
+                block: Box::new(block.into()),
             },
         ))
     })(s)

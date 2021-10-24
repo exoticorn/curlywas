@@ -3,7 +3,8 @@ pub struct Position(pub usize);
 
 #[derive(Debug)]
 pub struct Script<'a> {
-    pub items: Vec<TopLevelItem<'a>>,
+    pub global_vars: Vec<GlobalVar<'a>>,
+    pub functions: Vec<Function<'a>>
 }
 
 #[derive(Debug)]
@@ -40,6 +41,7 @@ pub struct Block<'a> {
 pub enum Statement<'a> {
     LocalVariable(LocalVariable<'a>),
     Poke {
+        position: Position,
         mem_location: MemoryLocation<'a>,
         value: Expression<'a>,
     },
@@ -63,7 +65,19 @@ pub struct LocalVariable<'a> {
 }
 
 #[derive(Debug)]
-pub enum Expression<'a> {
+pub struct Expression<'a> {
+    pub type_: Option<Type>,
+    pub expr: Expr<'a>,
+}
+
+impl<'a> From<Expr<'a>> for Expression<'a> {
+    fn from(expr: Expr<'a>) -> Expression<'a> {
+        Expression { type_: None, expr }
+    }
+}
+
+#[derive(Debug)]
+pub enum Expr<'a> {
     I32Const(i32),
     Variable {
         position: Position,
@@ -92,7 +106,7 @@ pub enum Expression<'a> {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
     Sub,
