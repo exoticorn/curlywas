@@ -1,0 +1,9 @@
+import time: i32;
+
+export fn tic() {
+  let i = 0;
+  loop frame {
+    i?64 = (i % 320 + time / 10) ^ (i / 320);
+    branch_if (i := i + 1) < 320*256: frame;
+  }
+}
