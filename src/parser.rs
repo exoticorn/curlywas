@@ -2,10 +2,10 @@ use crate::ast;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{alpha1, alphanumeric1, char, digit1, multispace0},
-    combinator::{self, cut, map, map_res, not, opt, peek, recognize, success, value},
+    character::complete::{alpha1, alphanumeric1, char, digit1, multispace0, none_of},
+    combinator::{self, cut, map, map_res, not, opt, peek, recognize, value},
     error::VerboseError,
-    multi::{fold_many0, many0, separated_list0},
+    multi::{fold_many0, many0, many1, separated_list0},
     sequence::{delimited, pair, preceded, separated_pair, terminated},
     Finish,
 };
@@ -19,10 +19,12 @@ pub fn parse(s: &str) -> Result<ast::Script, VerboseError<&str>> {
 
 fn script(s: &str) -> IResult<ast::Script> {
     let (s, items) = many0(top_level_item)(s)?;
+    let mut imports = vec![];
     let mut global_vars = vec![];
     let mut functions = vec![];
     for item in items {
         match item {
+            ast::TopLevelItem::Import(i) => imports.push(i),
             ast::TopLevelItem::GlobalVar(v) => global_vars.push(v),
             ast::TopLevelItem::Function(f) => functions.push(f),
         }
@@ -30,6 +32,7 @@ fn script(s: &str) -> IResult<ast::Script> {
     Ok((
         s,
         ast::Script {
+            imports,
             global_vars,
             functions,
         },
@@ -38,13 +41,50 @@ fn script(s: &str) -> IResult<ast::Script> {
 
 fn top_level_item(s: &str) -> IResult<ast::TopLevelItem> {
     alt((
+        map(import, ast::TopLevelItem::Import),
         map(function, ast::TopLevelItem::Function),
         map(global_var, ast::TopLevelItem::GlobalVar),
     ))(s)
 }
 
+fn import(s: &str) -> IResult<ast::Import> {
+    let (s, position) = ws(position)(s)?;
+    let (s, _) = tag("import")(s)?;
+    let (s, import) = ws(delimited(
+        char('"'),
+        recognize(many1(none_of("\""))),
+        char('"'),
+    ))(s)?;
+    let (s, type_) = alt((
+        map_res(
+            preceded(
+                ws(tag("memory")),
+                delimited(ws(char('(')), ws(digit1), ws(char(')'))),
+            ),
+            |num| num.parse().map(ast::ImportType::Memory),
+        ),
+        map(
+            preceded(
+                ws(tag("global")),
+                pair(identifier, preceded(ws(char(':')), type_)),
+            ),
+            |(name, type_)| ast::ImportType::Variable { name, type_ },
+        ),
+    ))(s)?;
+    let (s, _) = ws(char(';'))(s)?;
+
+    Ok((
+        s,
+        ast::Import {
+            position,
+            import,
+            type_,
+        },
+    ))
+}
+
 fn global_var(s: &str) -> IResult<ast::GlobalVar> {
-    let (s, vis) = visibility(s)?;
+    let (s, _) = ws(tag("global"))(s)?;
     let (s, position) = ws(position)(s)?;
     let (s, name) = identifier(s)?;
     let (s, type_) = preceded(ws(char(':')), type_)(s)?;
@@ -54,7 +94,6 @@ fn global_var(s: &str) -> IResult<ast::GlobalVar> {
         s,
         ast::GlobalVar {
             position,
-            visibility: vis,
             name: name,
             type_,
         },
@@ -62,7 +101,7 @@ fn global_var(s: &str) -> IResult<ast::GlobalVar> {
 }
 
 fn function(s: &str) -> IResult<ast::Function> {
-    let (s, vis) = visibility(s)?;
+    let (s, export) = map(ws(opt(tag("export"))), |e| e.is_some())(s)?;
     let (s, _) = ws(tag("fn"))(s)?;
     cut(move |s| {
         let (s, position) = ws(position)(s)?;
@@ -82,7 +121,7 @@ fn function(s: &str) -> IResult<ast::Function> {
             s,
             ast::Function {
                 position,
-                visibility: vis,
+                export,
                 name: name,
                 params,
                 type_,
@@ -359,14 +398,6 @@ fn integer(s: &str) -> IResult<i32> {
         recognize(pair(opt(char('-')), digit1)),
         |n: &str| n.parse::<i32>(),
     ))(s)
-}
-
-fn visibility(s: &str) -> IResult<ast::Visibility> {
-    ws(alt((
-        value(ast::Visibility::Export, tag("export")),
-        value(ast::Visibility::Import, tag("import")),
-        success(ast::Visibility::Local),
-    )))(s)
 }
 
 fn type_(s: &str) -> IResult<ast::Type> {

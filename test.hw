@@ -1,4 +1,5 @@
-import time: i32;
+import "uw8.ram" memory(2);
+import "uw8.time" global time: i32;
 
 export fn tic() {
   let i = 0;

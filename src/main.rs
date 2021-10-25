@@ -1,7 +1,12 @@
+use std::fs::File;
+use std::io::prelude::*;
+
 mod parser;
 mod ast;
 mod typecheck;
 mod constfold;
+mod emit;
+
 
 fn main() {
     let input = include_str!("../test.hw");
@@ -10,7 +15,9 @@ fn main() {
         Ok(mut script) => {
             constfold::fold_script(&mut script);
             typecheck::tc_script(&mut script).unwrap();
-            dbg!(script);
+            let wasm = emit::emit(&script);
+            let mut file = File::create("test.wasm").unwrap();
+            file.write_all(&wasm).unwrap();
         },
         Err(err) => println!("error: {}", nom::error::convert_error(input, err))
     }

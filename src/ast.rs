@@ -3,20 +3,35 @@ pub struct Position(pub usize);
 
 #[derive(Debug)]
 pub struct Script<'a> {
+    pub imports: Vec<Import<'a>>,
     pub global_vars: Vec<GlobalVar<'a>>,
     pub functions: Vec<Function<'a>>
 }
 
 #[derive(Debug)]
 pub enum TopLevelItem<'a> {
+    Import(Import<'a>),
     GlobalVar(GlobalVar<'a>),
     Function(Function<'a>),
 }
 
 #[derive(Debug)]
+pub struct Import<'a> {
+    pub position: Position,
+    pub import: &'a str,
+    pub type_: ImportType<'a>
+}
+
+#[derive(Debug)]
+pub enum ImportType<'a> {
+    Memory(u32),
+    Variable {name: &'a str, type_: Type},
+    // Function { name: &'a str, params: Vec<Type>, result: Option<Type> }
+}
+
+#[derive(Debug)]
 pub struct GlobalVar<'a> {
     pub position: Position,
-    pub visibility: Visibility,
     pub name: &'a str,
     pub type_: Type,
 }
@@ -24,7 +39,7 @@ pub struct GlobalVar<'a> {
 #[derive(Debug)]
 pub struct Function<'a> {
     pub position: Position,
-    pub visibility: Visibility,
+    pub export: bool,
     pub name: &'a str,
     pub params: Vec<(&'a str, Type)>,
     pub type_: Option<Type>,
@@ -35,6 +50,12 @@ pub struct Function<'a> {
 pub struct Block<'a> {
     pub statements: Vec<Statement<'a>>,
     pub final_expression: Option<Expression<'a>>,
+}
+
+impl<'a> Block<'a> {
+    pub fn type_(&self) -> Option<Type> {
+        self.final_expression.as_ref().and_then(|e| e.type_)
+    }
 }
 
 #[derive(Debug)]
@@ -130,14 +151,7 @@ pub enum MemSize {
     Word,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Visibility {
-    Local,
-    Export,
-    Import,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum Type {
     I32,
     I64,

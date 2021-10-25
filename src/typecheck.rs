@@ -19,6 +19,22 @@ pub fn tc_script(script: &mut ast::Script) -> Result<()> {
         local_vars: HashMap::new(),
     };
 
+    for import in &script.imports {
+        match import.type_ {
+            ast::ImportType::Variable { name, type_ } => {
+                if context.global_vars.contains_key(name) {
+                    return Err(Error {
+                        position: import.position,
+                        message: "Duplicate global variable".into(),
+                    });
+                }
+                context.global_vars.insert(name, type_);
+            }
+            // ast::ImportType::Function { .. } => todo!(),
+            ast::ImportType::Memory( .. ) => ()
+        }
+    }
+
     for v in &script.global_vars {
         if context.global_vars.contains_key(v.name) {
             return Err(Error {

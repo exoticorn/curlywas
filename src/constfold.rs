@@ -46,7 +46,6 @@ fn fold_expr(expr: &mut ast::Expression) {
         } => {
             fold_expr(left);
             fold_expr(right);
-            dbg!(&left.expr, &right.expr);
             match (&left.expr, &right.expr) {
                 (&ast::Expr::I32Const(left), &ast::Expr::I32Const(right)) => {
                     let result = match op {
