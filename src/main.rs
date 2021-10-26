@@ -1,24 +1,61 @@
-use std::fs::File;
+use anyhow::{anyhow, bail, Result};
 use std::io::prelude::*;
+use std::{fs::File, path::PathBuf};
 
-mod parser;
 mod ast;
-mod typecheck;
 mod constfold;
 mod emit;
+mod parser;
+mod typecheck;
 
+fn main() -> Result<()> {
+    let mut filename = PathBuf::from(
+        std::env::args()
+            .nth(1)
+            .ok_or_else(|| anyhow!("Path to .hw file missing"))?,
+    );
+    let mut input = String::new();
+    File::open(&filename)?.read_to_string(&mut input)?;
 
-fn main() {
-    let input = include_str!("../test.hw");
-    let result = parser::parse(input);
-    match result {
-        Ok(mut script) => {
-            constfold::fold_script(&mut script);
-            typecheck::tc_script(&mut script).unwrap();
-            let wasm = emit::emit(&script);
-            let mut file = File::create("test.wasm").unwrap();
-            file.write_all(&wasm).unwrap();
-        },
-        Err(err) => println!("error: {}", nom::error::convert_error(input, err))
+    let mut script = match parser::parse(input.as_str()) {
+        Ok(script) => script,
+        Err(err) => {
+            bail!(
+                "parse error: {}",
+                nom::error::convert_error(input.as_str(), err)
+            );
+        }
+    };
+
+    constfold::fold_script(&mut script);
+    typecheck::tc_script(&mut script).unwrap();
+    let wasm = emit::emit(&script);
+
+    wasmparser::validate(&wasm)?;
+
+    filename.set_extension("uw8");
+    File::create(filename)?.write_all(&wasm)?;
+
+    println!("Size of code section: {} bytes", code_section_size(&wasm)?);
+
+    Ok(())
+}
+
+fn code_section_size(wasm: &[u8]) -> Result<usize> {
+    for payload in wasmparser::Parser::new(0).parse_all(wasm) {
+        match payload? {
+            wasmparser::Payload::CodeSectionStart { range, .. } => {
+                let size = range.end - range.start;
+                let section_header_size = match size {
+                    0..=127 => 2,
+                    128..=16383 => 3,
+                    _ => 4,
+                };
+                return Ok(size + section_header_size);
+            }
+            _ => (),
+        }
     }
+
+    bail!("No code section found");
 }
