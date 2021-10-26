@@ -44,11 +44,15 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
                     memory64: false,
                 }
                 .into(),
-                ast::ImportType::Variable { type_, name } => {
+                ast::ImportType::Variable {
+                    type_,
+                    name,
+                    mutable,
+                } => {
                     globals.insert(name, globals.len() as u32);
                     GlobalType {
                         val_type: map_type(type_),
-                        mutable: false,
+                        mutable,
                     }
                     .into()
                 }
@@ -197,8 +201,8 @@ fn emit_block(ctx: &mut FunctionContext, block: &ast::Block) {
                 value,
                 ..
             } => {
-                emit_expression(ctx, value);
                 emit_expression(ctx, &mem_location.left);
+                emit_expression(ctx, value);
                 let offset = if let ast::Expr::I32Const(v) = mem_location.right.expr {
                     v as u32 as u64
                 } else {

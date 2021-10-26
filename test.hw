@@ -1,10 +1,10 @@
 import "uw8.ram" memory(2);
-import "uw8.time" global time: i32;
+import "uw8.time" global mut time: i32;
 
 export fn tic() {
-  let i = 0;
+  let i: i32;
   loop frame {
-    i?64 = (i % 320 + time / 10) ^ (i / 320);
+    i?120 = (i % 320 + time / 10) ^ (i / 320);
     branch_if (i := i + 1) < 320*256: frame;
   }
 }

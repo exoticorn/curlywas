@@ -5,7 +5,7 @@ pub struct Position(pub usize);
 pub struct Script<'a> {
     pub imports: Vec<Import<'a>>,
     pub global_vars: Vec<GlobalVar<'a>>,
-    pub functions: Vec<Function<'a>>
+    pub functions: Vec<Function<'a>>,
 }
 
 #[derive(Debug)]
@@ -19,13 +19,17 @@ pub enum TopLevelItem<'a> {
 pub struct Import<'a> {
     pub position: Position,
     pub import: &'a str,
-    pub type_: ImportType<'a>
+    pub type_: ImportType<'a>,
 }
 
 #[derive(Debug)]
 pub enum ImportType<'a> {
     Memory(u32),
-    Variable {name: &'a str, type_: Type},
+    Variable {
+        name: &'a str,
+        type_: Type,
+        mutable: bool,
+    },
     // Function { name: &'a str, params: Vec<Type>, result: Option<Type> }
 }
 

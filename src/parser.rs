@@ -66,9 +66,16 @@ fn import(s: &str) -> IResult<ast::Import> {
         map(
             preceded(
                 ws(tag("global")),
-                pair(identifier, preceded(ws(char(':')), type_)),
+                pair(
+                    pair(opt(ws(tag("mut"))), identifier),
+                    preceded(ws(char(':')), type_),
+                ),
             ),
-            |(name, type_)| ast::ImportType::Variable { name, type_ },
+            |((mutable, name), type_)| ast::ImportType::Variable {
+                name,
+                type_,
+                mutable: mutable.is_some(),
+            },
         ),
     ))(s)?;
     let (s, _) = ws(char(';'))(s)?;
