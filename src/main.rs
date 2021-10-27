@@ -28,7 +28,14 @@ fn main() -> Result<()> {
     };
 
     constfold::fold_script(&mut script);
-    typecheck::tc_script(&mut script).unwrap();
+    if let Err(err) = typecheck::tc_script(&mut script) {
+        let line = input[..(input.len() - err.position.0)]
+            .chars()
+            .filter(|c| *c == '\n')
+            .count()
+            + 1;
+        bail!("{} in line {}", err.message, line);
+    }
     let wasm = emit::emit(&script);
 
     wasmparser::validate(&wasm)?;

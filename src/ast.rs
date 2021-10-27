@@ -136,6 +136,17 @@ pub enum Expr<'a> {
         value: Box<Expression<'a>>,
         type_: Type,
     },
+    FuncCall {
+        position: Position,
+        name: &'a str,
+        params: Vec<Expression<'a>>
+    },
+    Select {
+        position: Position,
+        condition: Box<Expression<'a>>,
+        if_true: Box<Expression<'a>>,
+        if_false: Box<Expression<'a>>
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

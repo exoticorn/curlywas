@@ -167,7 +167,7 @@ fn statement(s: &str) -> IResult<ast::Statement> {
             terminated(
                 pair(
                     mem_location,
-                    ws(pair(position, preceded(char('='), expression))),
+                    cut(ws(pair(position, preceded(char('='), expression)))),
                 ),
                 ws(char(';')),
             ),
@@ -197,7 +197,7 @@ fn local_var(s: &str) -> IResult<ast::LocalVariable> {
                 name: name,
                 type_,
                 value: value.map(|v| v.into()),
-                defer: defer.is_some()
+                defer: defer.is_some(),
             },
         ))
     })(s)
@@ -225,7 +225,7 @@ fn mem_location(s: &str) -> IResult<ast::MemoryLocation> {
 }
 
 fn expression(s: &str) -> IResult<ast::Expr> {
-    expression_cmp(s)
+    expression_bit(s)
 }
 
 fn expression_atom(s: &str) -> IResult<ast::Expr> {
@@ -242,6 +242,36 @@ fn expression_atom(s: &str) -> IResult<ast::Expr> {
         ),
         map(float, ast::Expr::F32Const),
         map(integer, ast::Expr::I32Const),
+        map(
+            tuple((
+                terminated(ws(position), tag("select")),
+                preceded(ws(char('(')), expression),
+                preceded(ws(char(',')), expression),
+                delimited(ws(char(',')), expression, ws(char(')'))),
+            )),
+            |(position, condition, if_true, if_false)| ast::Expr::Select {
+                position,
+                condition: Box::new(condition.into()),
+                if_true: Box::new(if_true.into()),
+                if_false: Box::new(if_false.into()),
+            },
+        ),
+        map(
+            tuple((
+                ws(position),
+                identifier,
+                delimited(
+                    ws(char('(')),
+                    separated_list0(ws(char(',')), expression),
+                    ws(char(')')),
+                ),
+            )),
+            |(position, name, params)| ast::Expr::FuncCall {
+                position,
+                name,
+                params: params.into_iter().map(|p| p.into()).collect(),
+            },
+        ),
         map(ws(pair(position, identifier)), |(position, name)| {
             ast::Expr::Variable {
                 position,
@@ -333,33 +363,8 @@ fn expression_sum(s: &str) -> IResult<ast::Expr> {
     )(s)
 }
 
-fn expression_bit(s: &str) -> IResult<ast::Expr> {
-    let (s, mut init) = map(expression_sum, Some)(s)?;
-    fold_many0(
-        pair(
-            ws(pair(position, alt((char('&'), char('|'), char('^'))))),
-            expression_sum,
-        ),
-        move || init.take().unwrap(),
-        |left, ((position, op), right)| {
-            let op = match op {
-                '&' => ast::BinOp::And,
-                '|' => ast::BinOp::Or,
-                '^' => ast::BinOp::Xor,
-                _ => unreachable!(),
-            };
-            ast::Expr::BinOp {
-                position,
-                op,
-                left: Box::new(left.into()),
-                right: Box::new(right.into()),
-            }
-        },
-    )(s)
-}
-
 fn expression_cmp(s: &str) -> IResult<ast::Expr> {
-    let (s, mut init) = map(expression_bit, Some)(s)?;
+    let (s, mut init) = map(expression_sum, Some)(s)?;
     fold_many0(
         pair(
             ws(pair(
@@ -373,7 +378,7 @@ fn expression_cmp(s: &str) -> IResult<ast::Expr> {
                     tag(">"),
                 )),
             )),
-            expression_bit,
+            expression_sum,
         ),
         move || init.take().unwrap(),
         |left, ((position, op), right)| {
@@ -384,6 +389,31 @@ fn expression_cmp(s: &str) -> IResult<ast::Expr> {
                 "<" => ast::BinOp::Lt,
                 ">=" => ast::BinOp::Ge,
                 ">" => ast::BinOp::Gt,
+                _ => unreachable!(),
+            };
+            ast::Expr::BinOp {
+                position,
+                op,
+                left: Box::new(left.into()),
+                right: Box::new(right.into()),
+            }
+        },
+    )(s)
+}
+
+fn expression_bit(s: &str) -> IResult<ast::Expr> {
+    let (s, mut init) = map(expression_cmp, Some)(s)?;
+    fold_many0(
+        pair(
+            ws(pair(position, alt((char('&'), char('|'), char('^'))))),
+            expression_cmp,
+        ),
+        move || init.take().unwrap(),
+        |left, ((position, op), right)| {
+            let op = match op {
+                '&' => ast::BinOp::And,
+                '|' => ast::BinOp::Or,
+                '^' => ast::BinOp::Xor,
                 _ => unreachable!(),
             };
             ast::Expr::BinOp {

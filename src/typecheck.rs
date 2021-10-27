@@ -167,7 +167,7 @@ fn tc_expression<'a>(context: &mut Context<'a>, expr: &mut ast::Expression<'a>) 
             } else {
                 return Err(Error {
                     position,
-                    message: "Variable not found".into(),
+                    message: format!("Variable '{}' not found", name),
                 });
             }
         }
@@ -228,6 +228,73 @@ fn tc_expression<'a>(context: &mut Context<'a>, expr: &mut ast::Expression<'a>) 
             }
             Some(type_)
         }
+        ast::Expr::FuncCall {
+            position,
+            name,
+            ref mut params,
+        } => {
+            if let Some((ptypes, rtype)) = builtin_function_types(name) {
+                if params.len() != ptypes.len() {
+                    return Err(Error {
+                        position,
+                        message: format!(
+                            "Expected {} parameters but found {}",
+                            ptypes.len(),
+                            params.len()
+                        ),
+                    });
+                }
+                for (index, (ptype, param)) in ptypes.iter().zip(params.iter_mut()).enumerate() {
+                    tc_expression(context, param)?;
+                    if param.type_.is_none() || param.type_.unwrap() != *ptype {
+                        return Err(Error {
+                            position,
+                            message: format!(
+                                "Param {} is {:?} but should be {:?}",
+                                index + 1,
+                                param.type_,
+                                ptype
+                            ),
+                        });
+                    }
+                }
+                rtype
+            } else {
+                return Err(Error {
+                    position,
+                    message: format!("Unknown function '{}'", name),
+                });
+            }
+        }
+        ast::Expr::Select {
+            position,
+            ref mut condition,
+            ref mut if_true,
+            ref mut if_false,
+        } => {
+            tc_expression(context, condition)?;
+            tc_expression(context, if_true)?;
+            tc_expression(context, if_false)?;
+            if condition.type_ != Some(ast::Type::I32) {
+                return Err(Error {
+                    position,
+                    message: "Condition of select has to be of type i32".into(),
+                });
+            }
+            if if_true.type_ != if_false.type_ {
+                return Err(Error {
+                    position,
+                    message: "Types of select branches differ".into(),
+                });
+            }
+            if if_true.type_.is_none() {
+                return Err(Error {
+                    position,
+                    message: "Types of select branches cannot be void".into(),
+                });
+            }
+            if_true.type_
+        }
     };
     Ok(())
 }
@@ -245,4 +312,14 @@ fn tc_mem_location<'a>(
         });
     }
     Ok(())
+}
+
+fn builtin_function_types(name: &str) -> Option<(&'static [ast::Type], Option<ast::Type>)> {
+    use ast::Type::*;
+    let types: (&'static [ast::Type], Option<ast::Type>) = match name {
+        "sqrt" => (&[F32], Some(F32)),
+        "abs" => (&[F32], Some(F32)),
+        _ => return None,
+    };
+    Some(types)
 }

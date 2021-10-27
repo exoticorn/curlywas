@@ -104,5 +104,25 @@ fn fold_expr(expr: &mut ast::Expression) {
             ref mut condition, ..
         } => fold_expr(condition),
         ast::Expr::Cast { ref mut value, .. } => fold_expr(value),
+        ast::Expr::FuncCall {
+            name,
+            ref mut params,
+            ..
+        } => {
+            for param in params.iter_mut() {
+                fold_expr(param);
+            }
+            use ast::Expr::*;
+            let params: Vec<_> = params.iter().map(|e| &e.expr).collect();
+            expr.expr = match (name, params.as_slice()) {
+                ("sqrt", [F32Const(v)]) if *v >= 0.0 => F32Const(v.sqrt()),
+                _ => return,
+            };
+        }
+        ast::Expr::Select { ref mut condition, ref mut if_true, ref mut if_false, .. } => {
+            fold_expr(condition);
+            fold_expr(if_true);
+            fold_expr(if_false);
+        }
     }
 }

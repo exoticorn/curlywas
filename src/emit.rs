@@ -180,6 +180,21 @@ fn collect_locals_expr<'a>(expr: &ast::Expression<'a>, locals: &mut Vec<(&'a str
         ast::Expr::LocalTee { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::Loop { block, .. } => collect_locals(block, locals),
         ast::Expr::Cast { value, .. } => collect_locals_expr(value, locals),
+        ast::Expr::FuncCall { params, .. } => {
+            for param in params {
+                collect_locals_expr(param, locals);
+            }
+        }
+        ast::Expr::Select {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            collect_locals_expr(condition, locals);
+            collect_locals_expr(if_true, locals);
+            collect_locals_expr(if_false, locals);
+        }
     }
 }
 
@@ -336,6 +351,26 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 ctx.function.instruction(&inst);
             }
         }
+        ast::Expr::FuncCall { name, params, .. } => {
+            let mut types = vec![];
+            for param in params {
+                types.push(param.type_.unwrap());
+                emit_expression(ctx, param);
+            }
+            ctx.function
+                .instruction(&builtin_function(name, &types).unwrap());
+        }
+        ast::Expr::Select {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            emit_expression(ctx, if_true);
+            emit_expression(ctx, if_false);
+            emit_expression(ctx, condition);
+            ctx.function.instruction(&Instruction::Select);
+        }
     }
 }
 
@@ -354,4 +389,14 @@ fn map_block_type(t: Option<ast::Type>) -> BlockType {
     } else {
         BlockType::Empty
     }
+}
+
+fn builtin_function(name: &str, params: &[ast::Type]) -> Option<Instruction<'static>> {
+    use ast::Type::*;
+    let inst = match (name, params) {
+        ("sqrt", &[F32]) => Instruction::F32Sqrt,
+        ("abs", &[F32]) => Instruction::F32Abs,
+        _ => return None,
+    };
+    Some(inst)
 }
