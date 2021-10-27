@@ -126,6 +126,7 @@ fn tc_block<'a>(context: &mut Context<'a>, block: &mut ast::Block<'a>) -> Result
 fn tc_expression<'a>(context: &mut Context<'a>, expr: &mut ast::Expression<'a>) -> Result<()> {
     expr.type_ = match expr.expr {
         ast::Expr::I32Const(_) => Some(ast::Type::I32),
+        ast::Expr::F32Const(_) => Some(ast::Type::F32),
         ast::Expr::BinOp {
             position,
             op,
@@ -212,6 +213,20 @@ fn tc_expression<'a>(context: &mut Context<'a>, expr: &mut ast::Expression<'a>) 
                 });
             }
             None
+        }
+        ast::Expr::Cast {
+            position,
+            ref mut value,
+            type_,
+        } => {
+            tc_expression(context, value)?;
+            if value.type_.is_none() {
+                return Err(Error {
+                    position,
+                    message: "Cannot cast void".into(),
+                });
+            }
+            Some(type_)
         }
     };
     Ok(())

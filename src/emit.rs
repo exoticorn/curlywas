@@ -111,6 +111,7 @@ struct FunctionContext<'a> {
     globals: &'a HashMap<&'a str, u32>,
     locals: &'a HashMap<&'a str, u32>,
     labels: Vec<String>,
+    deferred_inits: HashMap<&'a str, &'a ast::Expression<'a>>,
 }
 
 fn emit_function(func: &ast::Function, globals: &HashMap<&str, u32>) -> Function {
@@ -131,6 +132,7 @@ fn emit_function(func: &ast::Function, globals: &HashMap<&str, u32>) -> Function
         globals,
         locals: &locals,
         labels: vec![],
+        deferred_inits: HashMap::new(),
     };
 
     emit_block(&mut context, &func.body);
@@ -169,7 +171,7 @@ fn collect_locals<'a>(block: &ast::Block<'a>, locals: &mut Vec<(&'a str, ast::Ty
 
 fn collect_locals_expr<'a>(expr: &ast::Expression<'a>, locals: &mut Vec<(&'a str, ast::Type)>) {
     match &expr.expr {
-        ast::Expr::Variable { .. } | ast::Expr::I32Const(_) => (),
+        ast::Expr::Variable { .. } | ast::Expr::I32Const(_) | ast::Expr::F32Const(_) => (),
         ast::Expr::BinOp { left, right, .. } => {
             collect_locals_expr(left, locals);
             collect_locals_expr(right, locals);
@@ -177,10 +179,11 @@ fn collect_locals_expr<'a>(expr: &ast::Expression<'a>, locals: &mut Vec<(&'a str
         ast::Expr::BranchIf { condition, .. } => collect_locals_expr(condition, locals),
         ast::Expr::LocalTee { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::Loop { block, .. } => collect_locals(block, locals),
+        ast::Expr::Cast { value, .. } => collect_locals_expr(value, locals),
     }
 }
 
-fn emit_block(ctx: &mut FunctionContext, block: &ast::Block) {
+fn emit_block<'a>(ctx: &mut FunctionContext<'a>, block: &'a ast::Block) {
     for stmt in &block.statements {
         match stmt {
             ast::Statement::Expression(e) => {
@@ -191,9 +194,13 @@ fn emit_block(ctx: &mut FunctionContext, block: &ast::Block) {
             }
             ast::Statement::LocalVariable(v) => {
                 if let Some(ref val) = v.value {
-                    emit_expression(ctx, val);
-                    ctx.function
-                        .instruction(&Instruction::LocalSet(*ctx.locals.get(v.name).unwrap()));
+                    if v.defer {
+                        ctx.deferred_inits.insert(v.name, val);
+                    } else {
+                        emit_expression(ctx, val);
+                        ctx.function
+                            .instruction(&Instruction::LocalSet(*ctx.locals.get(v.name).unwrap()));
+                    }
                 }
             }
             ast::Statement::Poke {
@@ -228,7 +235,7 @@ fn emit_block(ctx: &mut FunctionContext, block: &ast::Block) {
     }
 }
 
-fn emit_expression(ctx: &mut FunctionContext, expr: &ast::Expression) {
+fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression) {
     match &expr.expr {
         ast::Expr::BinOp {
             left, op, right, ..
@@ -253,8 +260,19 @@ fn emit_expression(ctx: &mut FunctionContext, expr: &ast::Expression) {
                 (I32, Gt) => Instruction::I32GtS,
                 (I32, Ge) => Instruction::I32GeS,
 
+                (F32, Add) => Instruction::F32Add,
+                (F32, Sub) => Instruction::F32Sub,
+                (F32, Mul) => Instruction::F32Mul,
+                (F32, Div) => Instruction::F32Div,
+                (F32, Rem | And | Or | Xor) => unreachable!(),
+                (F32, Eq) => Instruction::F32Eq,
+                (F32, Ne) => Instruction::F32Neq,
+                (F32, Lt) => Instruction::F32Lt,
+                (F32, Le) => Instruction::F32Le,
+                (F32, Gt) => Instruction::F32Gt,
+                (F32, Ge) => Instruction::F32Ge,
+
                 (I64, _) => todo!(),
-                (F32, _) => todo!(),
                 (F64, _) => todo!(),
             });
         }
@@ -275,6 +293,9 @@ fn emit_expression(ctx: &mut FunctionContext, expr: &ast::Expression) {
         ast::Expr::I32Const(v) => {
             ctx.function.instruction(&Instruction::I32Const(*v));
         }
+        ast::Expr::F32Const(v) => {
+            ctx.function.instruction(&Instruction::F32Const(*v));
+        }
         ast::Expr::LocalTee { name, value, .. } => {
             emit_expression(ctx, value);
             let index = ctx.locals.get(*name).unwrap();
@@ -290,11 +311,29 @@ fn emit_expression(ctx: &mut FunctionContext, expr: &ast::Expression) {
         }
         ast::Expr::Variable { name, .. } => {
             if let Some(index) = ctx.locals.get(*name) {
-                ctx.function.instruction(&Instruction::LocalGet(*index));
+                if let Some(expr) = ctx.deferred_inits.remove(*name) {
+                    emit_expression(ctx, expr);
+                    ctx.function.instruction(&Instruction::LocalTee(*index));
+                } else {
+                    ctx.function.instruction(&Instruction::LocalGet(*index));
+                }
             } else if let Some(index) = ctx.globals.get(*name) {
                 ctx.function.instruction(&Instruction::GlobalGet(*index));
             } else {
                 unreachable!()
+            }
+        }
+        ast::Expr::Cast { value, type_, .. } => {
+            emit_expression(ctx, value);
+            use ast::Type::*;
+            let inst = match (value.type_.unwrap(), *type_) {
+                (t1, t2) if t1 == t2 => None,
+                (I32, F32) => Some(Instruction::F32ConvertI32S),
+                (F32, I32) => Some(Instruction::I32TruncF32S),
+                _ => todo!(),
+            };
+            if let Some(inst) = inst {
+                ctx.function.instruction(&inst);
             }
         }
     }

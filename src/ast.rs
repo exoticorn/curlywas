@@ -87,6 +87,7 @@ pub struct LocalVariable<'a> {
     pub name: &'a str,
     pub type_: Option<Type>,
     pub value: Option<Expression<'a>>,
+    pub defer: bool
 }
 
 #[derive(Debug)]
@@ -104,6 +105,7 @@ impl<'a> From<Expr<'a>> for Expression<'a> {
 #[derive(Debug)]
 pub enum Expr<'a> {
     I32Const(i32),
+    F32Const(f32),
     Variable {
         position: Position,
         name: &'a str,
@@ -128,6 +130,11 @@ pub enum Expr<'a> {
         position: Position,
         name: &'a str,
         value: Box<Expression<'a>>,
+    },
+    Cast {
+        position: Position,
+        value: Box<Expression<'a>>,
+        type_: Type,
     },
 }
 

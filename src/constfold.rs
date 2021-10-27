@@ -78,14 +78,31 @@ fn fold_expr(expr: &mut ast::Expression) {
                     };
                     expr.expr = ast::Expr::I32Const(result);
                 }
+                (&ast::Expr::F32Const(left), &ast::Expr::F32Const(right)) => {
+                    use ast::Expr::*;
+                    expr.expr = match op {
+                        Add => F32Const(left + right),
+                        Sub => F32Const(left - right),
+                        Mul => F32Const(left * right),
+                        Div => F32Const(left / right),
+                        Rem | And | Or | Xor => return,
+                        Eq => I32Const((left == right) as i32),
+                        Ne => I32Const((left != right) as i32),
+                        Lt => I32Const((left < right) as i32),
+                        Le => I32Const((left <= right) as i32),
+                        Gt => I32Const((left > right) as i32),
+                        Ge => I32Const((left >= right) as i32),
+                    };
+                }
                 _ => (),
             }
         }
-        ast::Expr::I32Const(_) | ast::Expr::Variable { .. } => (),
+        ast::Expr::I32Const(_) | ast::Expr::F32Const(_) | ast::Expr::Variable { .. } => (),
         ast::Expr::LocalTee { ref mut value, .. } => fold_expr(value),
         ast::Expr::Loop { ref mut block, .. } => fold_block(block),
         ast::Expr::BranchIf {
             ref mut condition, ..
         } => fold_expr(condition),
+        ast::Expr::Cast { ref mut value, .. } => fold_expr(value),
     }
 }

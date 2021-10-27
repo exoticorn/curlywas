@@ -6,7 +6,7 @@ use nom::{
     combinator::{self, cut, map, map_res, not, opt, peek, recognize, value},
     error::VerboseError,
     multi::{fold_many0, many0, many1, separated_list0},
-    sequence::{delimited, pair, preceded, separated_pair, terminated},
+    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     Finish,
 };
 
@@ -182,21 +182,25 @@ fn statement(s: &str) -> IResult<ast::Statement> {
 
 fn local_var(s: &str) -> IResult<ast::LocalVariable> {
     let (s, _) = ws(tag("let"))(s)?;
-    let (s, position) = ws(position)(s)?;
-    let (s, name) = identifier(s)?;
-    let (s, type_) = opt(preceded(ws(char(':')), type_))(s)?;
-    let (s, value) = opt(preceded(ws(char('=')), expression))(s)?;
-    let (s, _) = ws(char(';'))(s)?;
+    cut(move |s| {
+        let (s, defer) = opt(ws(tag("defer")))(s)?;
+        let (s, position) = ws(position)(s)?;
+        let (s, name) = identifier(s)?;
+        let (s, type_) = opt(preceded(ws(char(':')), type_))(s)?;
+        let (s, value) = opt(preceded(ws(char('=')), expression))(s)?;
+        let (s, _) = ws(char(';'))(s)?;
 
-    Ok((
-        s,
-        ast::LocalVariable {
-            position,
-            name: name,
-            type_,
-            value: value.map(|v| v.into()),
-        },
-    ))
+        Ok((
+            s,
+            ast::LocalVariable {
+                position,
+                name: name,
+                type_,
+                value: value.map(|v| v.into()),
+                defer: defer.is_some()
+            },
+        ))
+    })(s)
 }
 
 fn mem_location(s: &str) -> IResult<ast::MemoryLocation> {
@@ -236,7 +240,8 @@ fn expression_atom(s: &str) -> IResult<ast::Expr> {
                 value: Box::new(value.into()),
             },
         ),
-        map(integer, |v| ast::Expr::I32Const(v)),
+        map(float, ast::Expr::F32Const),
+        map(integer, ast::Expr::I32Const),
         map(ws(pair(position, identifier)), |(position, name)| {
             ast::Expr::Variable {
                 position,
@@ -266,12 +271,25 @@ fn branch_if(s: &str) -> IResult<ast::Expr> {
     })(s)
 }
 
-fn expression_product(s: &str) -> IResult<ast::Expr> {
+fn expression_cast(s: &str) -> IResult<ast::Expr> {
     let (s, mut init) = map(expression_atom, Some)(s)?;
+    fold_many0(
+        pair(ws(terminated(position, tag("as"))), type_),
+        move || init.take().unwrap(),
+        |value, (position, type_)| ast::Expr::Cast {
+            position,
+            value: Box::new(value.into()),
+            type_,
+        },
+    )(s)
+}
+
+fn expression_product(s: &str) -> IResult<ast::Expr> {
+    let (s, mut init) = map(expression_cast, Some)(s)?;
     fold_many0(
         pair(
             ws(pair(position, alt((char('*'), char('/'), char('%'))))),
-            expression_atom,
+            expression_cast,
         ),
         move || init.take().unwrap(),
         |left, ((position, op), right)| {
@@ -404,6 +422,13 @@ fn integer(s: &str) -> IResult<i32> {
     ws(map_res(
         recognize(pair(opt(char('-')), digit1)),
         |n: &str| n.parse::<i32>(),
+    ))(s)
+}
+
+fn float(s: &str) -> IResult<f32> {
+    ws(map_res(
+        recognize(tuple((opt(char('-')), digit1, char('.'), digit1))),
+        |n: &str| n.parse::<f32>(),
     ))(s)
 }
 
