@@ -6,6 +6,7 @@ mod ast;
 mod constfold;
 mod emit;
 mod parser;
+mod parser2;
 mod typecheck;
 
 fn main() -> Result<()> {
@@ -16,6 +17,10 @@ fn main() -> Result<()> {
     );
     let mut input = String::new();
     File::open(&filename)?.read_to_string(&mut input)?;
+
+    if let Err(_) = parser2::parse(&input) {
+        bail!("Parse failed");
+    }
 
     let mut script = match parser::parse(input.as_str()) {
         Ok(script) => script,
