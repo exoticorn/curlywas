@@ -420,6 +420,7 @@ fn map_token<O>(
 
 fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clone {
     recursive(|block| {
+        let mut block_expression = None;
         let expression = recursive(|expression| {
             let val = map_token(|tok| match tok {
                 Token::Int(v) => Some(ast::Expr::I32Const(*v)),
@@ -445,7 +446,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                 .map(|(name, expr)| ast::Expr::LocalTee {
                     name,
                     value: Box::new(expr),
-                });
+                }).boxed();
 
             let loop_expr = just(Token::Loop)
                 .ignore_then(ident)
@@ -459,6 +460,10 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     block: Box::new(block),
                 });
 
+            let block_expr = loop_expr.boxed();
+
+            block_expression = Some(block_expr.clone());
+
             let branch_if = just(Token::BranchIf)
                 .ignore_then(expression.clone())
                 .then_ignore(just(Token::Ctrl(':')))
@@ -466,7 +471,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                 .map(|(condition, label)| ast::Expr::BranchIf {
                     condition: Box::new(condition),
                     label,
-                });
+                }).boxed();
 
             let let_ = just(Token::Let)
                 .ignore_then(just(Token::Defer).or_not())
@@ -482,7 +487,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     type_,
                     value: value.map(Box::new),
                     defer: defer.is_some(),
-                });
+                }).boxed();
 
             let tee = ident
                 .clone()
@@ -491,7 +496,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                 .map(|(name, value)| ast::Expr::LocalTee {
                     name,
                     value: Box::new(value),
-                });
+                }).boxed();
 
             let select = just(Token::Select)
                 .ignore_then(
@@ -507,7 +512,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     condition: Box::new(condition),
                     if_true: Box::new(if_true),
                     if_false: Box::new(if_false),
-                });
+                }).boxed();
 
             let function_call = ident
                 .clone()
@@ -517,14 +522,14 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         .separated_by(just(Token::Ctrl(',')))
                         .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
                 )
-                .map(|(name, params)| ast::Expr::FuncCall { name, params });
+                .map(|(name, params)| ast::Expr::FuncCall { name, params }).boxed();
 
             let atom = val
                 .or(tee)
                 .or(function_call)
                 .or(variable)
                 .or(local_tee)
-                .or(loop_expr)
+                .or(block_expr)
                 .or(branch_if)
                 .or(let_)
                 .or(select)
@@ -537,8 +542,8 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     Token::Ctrl(')'),
                     [(Token::Ctrl('{'), Token::Ctrl('}'))],
                     |span| ast::Expr::Error.with_span(span),
-                ));
-
+                )).boxed();
+            
             let unary_op = just(Token::Op("-".to_string()))
                 .to(ast::UnaryOp::Negate)
                 .map_with_span(|op, span| (op, span))
@@ -553,7 +558,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         }
                         .with_span(span)
                     })
-                });
+                }).boxed();
 
             let op_cast = unary_op
                 .clone()
@@ -569,7 +574,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         type_,
                     }
                     .with_span(span)
-                });
+                }).boxed();
 
             let mem_size = just(Token::Ctrl('?'))
                 .to(ast::MemSize::Byte)
@@ -596,7 +601,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         value: Box::new(value),
                     }
                     .with_span(span)
-                });
+                }).boxed();
 
             let op_product = memory_op
                 .clone()
@@ -616,7 +621,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         right: Box::new(right),
                     }
                     .with_span(span)
-                });
+                }).boxed();
 
             let op_sum = op_product
                 .clone()
@@ -635,7 +640,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         right: Box::new(right),
                     }
                     .with_span(span)
-                });
+                }).boxed();
 
             let op_cmp = op_sum
                 .clone()
@@ -658,7 +663,7 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         right: Box::new(right),
                     }
                     .with_span(span)
-                });
+                }).boxed();
 
             let op_bit = op_cmp
                 .clone()
@@ -678,14 +683,17 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         right: Box::new(right),
                     }
                     .with_span(span)
-                });
+                }).boxed();
 
             op_bit
         });
 
+        let block_expression = block_expression.unwrap();
+
         expression
             .clone()
             .then_ignore(just(Token::Ctrl(';')))
+            .or(block_expression.map_with_span(|expr, span| expr.with_span(span)))
             .repeated()
             .then(expression.clone().or_not())
             .map(|(statements, final_expression)| ast::Block {
