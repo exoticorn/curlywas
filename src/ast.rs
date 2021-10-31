@@ -1,152 +1,146 @@
-#[derive(Debug, Clone, Copy)]
-pub struct Position(pub usize);
+use crate::Span;
 
 #[derive(Debug)]
-pub struct Script<'a> {
-    pub imports: Vec<Import<'a>>,
-    pub global_vars: Vec<GlobalVar<'a>>,
-    pub functions: Vec<Function<'a>>,
+pub struct Script {
+    pub imports: Vec<Import>,
+    pub global_vars: Vec<GlobalVar>,
+    pub functions: Vec<Function>,
 }
 
 #[derive(Debug)]
-pub enum TopLevelItem<'a> {
-    Import(Import<'a>),
-    GlobalVar(GlobalVar<'a>),
-    Function(Function<'a>),
+pub enum TopLevelItem {
+    Import(Import),
+    GlobalVar(GlobalVar),
+    Function(Function),
 }
 
 #[derive(Debug)]
-pub struct Import<'a> {
-    pub position: Position,
-    pub import: &'a str,
-    pub type_: ImportType<'a>,
+pub struct Import {
+    pub span: Span,
+    pub import: String,
+    pub type_: ImportType,
 }
 
 #[derive(Debug)]
-pub enum ImportType<'a> {
+pub enum ImportType {
     Memory(u32),
     Variable {
-        name: &'a str,
+        name: String,
         type_: Type,
         mutable: bool,
     },
-    // Function { name: &'a str, params: Vec<Type>, result: Option<Type> }
+    // Function { name: String, params: Vec<Type>, result: Option<Type> }
 }
 
 #[derive(Debug)]
-pub struct GlobalVar<'a> {
-    pub position: Position,
-    pub name: &'a str,
+pub struct GlobalVar {
+    pub span: Span,
+    pub name: String,
     pub type_: Type,
 }
 
 #[derive(Debug)]
-pub struct Function<'a> {
-    pub position: Position,
+pub struct Function {
+    pub span: Span,
     pub export: bool,
-    pub name: &'a str,
-    pub params: Vec<(&'a str, Type)>,
+    pub name: String,
+    pub params: Vec<(String, Type)>,
     pub type_: Option<Type>,
-    pub body: Block<'a>,
+    pub body: Block,
 }
 
 #[derive(Debug)]
-pub struct Block<'a> {
-    pub statements: Vec<Statement<'a>>,
-    pub final_expression: Option<Expression<'a>>,
+pub struct Block {
+    pub statements: Vec<Expression>,
+    pub final_expression: Option<Box<Expression>>,
 }
 
-impl<'a> Block<'a> {
+impl Block {
     pub fn type_(&self) -> Option<Type> {
         self.final_expression.as_ref().and_then(|e| e.type_)
     }
 }
 
 #[derive(Debug)]
-pub enum Statement<'a> {
-    LocalVariable(LocalVariable<'a>),
-    Poke {
-        position: Position,
-        mem_location: MemoryLocation<'a>,
-        value: Expression<'a>,
-    },
-    Expression(Expression<'a>),
-}
-
-#[derive(Debug)]
-pub struct MemoryLocation<'a> {
-    pub position: Position,
+pub struct MemoryLocation {
+    pub span: Span,
     pub size: MemSize,
-    pub left: Expression<'a>,
-    pub right: Expression<'a>,
+    pub left: Box<Expression>,
+    pub right: Box<Expression>,
 }
 
 #[derive(Debug)]
-pub struct LocalVariable<'a> {
-    pub position: Position,
-    pub name: &'a str,
+pub struct Expression {
     pub type_: Option<Type>,
-    pub value: Option<Expression<'a>>,
-    pub defer: bool
+    pub expr: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug)]
-pub struct Expression<'a> {
-    pub type_: Option<Type>,
-    pub expr: Expr<'a>,
-}
-
-impl<'a> From<Expr<'a>> for Expression<'a> {
-    fn from(expr: Expr<'a>) -> Expression<'a> {
-        Expression { type_: None, expr }
-    }
-}
-
-#[derive(Debug)]
-pub enum Expr<'a> {
+pub enum Expr {
     I32Const(i32),
     F32Const(f32),
-    Variable {
-        position: Position,
-        name: &'a str,
+    Variable(String),
+    Let {
+        name: String,
+        type_: Option<Type>,
+        value: Option<Box<Expression>>,
+        defer: bool,
+    },
+    Poke {
+        mem_location: MemoryLocation,
+        value: Box<Expression>,
     },
     Loop {
-        position: Position,
-        label: &'a str,
-        block: Box<Block<'a>>,
+        label: String,
+        block: Box<Block>,
     },
     BranchIf {
-        position: Position,
-        condition: Box<Expression<'a>>,
-        label: &'a str,
+        condition: Box<Expression>,
+        label: String,
+    },
+    UnaryOp {
+        op: UnaryOp,
+        value: Box<Expression>,
     },
     BinOp {
-        position: Position,
         op: BinOp,
-        left: Box<Expression<'a>>,
-        right: Box<Expression<'a>>,
+        left: Box<Expression>,
+        right: Box<Expression>,
     },
     LocalTee {
-        position: Position,
-        name: &'a str,
-        value: Box<Expression<'a>>,
+        name: String,
+        value: Box<Expression>,
     },
     Cast {
-        position: Position,
-        value: Box<Expression<'a>>,
+        value: Box<Expression>,
         type_: Type,
     },
     FuncCall {
-        position: Position,
-        name: &'a str,
-        params: Vec<Expression<'a>>
+        name: String,
+        params: Vec<Expression>,
     },
     Select {
-        position: Position,
-        condition: Box<Expression<'a>>,
-        if_true: Box<Expression<'a>>,
-        if_false: Box<Expression<'a>>
+        condition: Box<Expression>,
+        if_true: Box<Expression>,
+        if_false: Box<Expression>,
+    },
+    Error,
+}
+
+impl Expr {
+    pub fn with_span(self, span: Span) -> Expression {
+        Expression {
+            type_: None,
+            expr: self,
+            span: span,
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnaryOp {
+    Negate,
 }
 
 #[derive(Debug, Clone, Copy)]

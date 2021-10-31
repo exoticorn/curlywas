@@ -35,7 +35,7 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
                     Some(&import.import[(dot_index + 1)..]),
                 )
             } else {
-                (import.import, None)
+                (import.import.as_str(), None)
             };
             let type_: EntityType = match import.type_ {
                 ast::ImportType::Memory(min_size) => MemoryType {
@@ -46,7 +46,7 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
                 .into(),
                 ast::ImportType::Variable {
                     type_,
-                    name,
+                    ref name,
                     mutable,
                 } => {
                     globals.insert(name, globals.len() as u32);
@@ -72,7 +72,7 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
             let type_ = *function_types.get(&function_type_key(func)).unwrap();
             functions.function(type_ as u32);
             if func.export {
-                exports.export(func.name, Export::Function(index as u32));
+                exports.export(&func.name, Export::Function(index as u32));
             }
 
             code.function(&emit_function(func, &globals));
@@ -109,9 +109,9 @@ fn function_type_key(func: &ast::Function) -> FunctionTypeKey {
 struct FunctionContext<'a> {
     function: &'a mut Function,
     globals: &'a HashMap<&'a str, u32>,
-    locals: &'a HashMap<&'a str, u32>,
+    locals: &'a HashMap<String, u32>,
     labels: Vec<String>,
-    deferred_inits: HashMap<&'a str, &'a ast::Expression<'a>>,
+    deferred_inits: HashMap<&'a str, &'a ast::Expression>,
 }
 
 fn emit_function(func: &ast::Function, globals: &HashMap<&str, u32>) -> Function {
@@ -121,7 +121,7 @@ fn emit_function(func: &ast::Function, globals: &HashMap<&str, u32>) -> Function
 
     let mut function = Function::new_with_locals_types(locals.iter().map(|(_, t)| map_type(*t)));
 
-    let locals: HashMap<&str, u32> = locals
+    let locals: HashMap<String, u32> = locals
         .into_iter()
         .enumerate()
         .map(|(index, (name, _))| (name, index as u32))
@@ -144,34 +144,33 @@ fn emit_function(func: &ast::Function, globals: &HashMap<&str, u32>) -> Function
     function
 }
 
-fn collect_locals<'a>(block: &ast::Block<'a>, locals: &mut Vec<(&'a str, ast::Type)>) {
+fn collect_locals<'a>(block: &ast::Block, locals: &mut Vec<(String, ast::Type)>) {
     for stmt in &block.statements {
-        match stmt {
-            ast::Statement::LocalVariable(v) => {
-                locals.push((v.name, v.type_.unwrap()));
-                if let Some(ref value) = v.value {
-                    collect_locals_expr(value, locals);
-                }
-            }
-            ast::Statement::Expression(e) => collect_locals_expr(e, locals),
-            ast::Statement::Poke {
-                mem_location,
-                value,
-                ..
-            } => {
-                collect_locals_expr(&mem_location.left, locals);
-                collect_locals_expr(value, locals);
-            }
-        }
+        collect_locals_expr(stmt, locals);
     }
     if let Some(ref expr) = block.final_expression {
         collect_locals_expr(expr, locals);
     }
 }
 
-fn collect_locals_expr<'a>(expr: &ast::Expression<'a>, locals: &mut Vec<(&'a str, ast::Type)>) {
+fn collect_locals_expr<'a>(expr: &ast::Expression, locals: &mut Vec<(String, ast::Type)>) {
     match &expr.expr {
+        ast::Expr::Let {name, type_, value, ..} => {
+            locals.push((name.clone(), type_.unwrap()));
+            if let Some(ref value) = value {
+                collect_locals_expr(value, locals);
+            }
+        }
+        ast::Expr::Poke {
+            mem_location,
+            value,
+            ..
+        } => {
+            collect_locals_expr(&mem_location.left, locals);
+            collect_locals_expr(value, locals);
+        }
         ast::Expr::Variable { .. } | ast::Expr::I32Const(_) | ast::Expr::F32Const(_) => (),
+        ast::Expr::UnaryOp { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::BinOp { left, right, .. } => {
             collect_locals_expr(left, locals);
             collect_locals_expr(right, locals);
@@ -195,54 +194,15 @@ fn collect_locals_expr<'a>(expr: &ast::Expression<'a>, locals: &mut Vec<(&'a str
             collect_locals_expr(if_true, locals);
             collect_locals_expr(if_false, locals);
         }
+        ast::Expr::Error => unreachable!()
     }
 }
 
 fn emit_block<'a>(ctx: &mut FunctionContext<'a>, block: &'a ast::Block) {
     for stmt in &block.statements {
-        match stmt {
-            ast::Statement::Expression(e) => {
-                emit_expression(ctx, e);
-                if e.type_.is_some() {
-                    ctx.function.instruction(&Instruction::Drop);
-                }
-            }
-            ast::Statement::LocalVariable(v) => {
-                if let Some(ref val) = v.value {
-                    if v.defer {
-                        ctx.deferred_inits.insert(v.name, val);
-                    } else {
-                        emit_expression(ctx, val);
-                        ctx.function
-                            .instruction(&Instruction::LocalSet(*ctx.locals.get(v.name).unwrap()));
-                    }
-                }
-            }
-            ast::Statement::Poke {
-                mem_location,
-                value,
-                ..
-            } => {
-                emit_expression(ctx, &mem_location.left);
-                emit_expression(ctx, value);
-                let offset = if let ast::Expr::I32Const(v) = mem_location.right.expr {
-                    v as u32 as u64
-                } else {
-                    unreachable!()
-                };
-                ctx.function.instruction(&match mem_location.size {
-                    ast::MemSize::Byte => Instruction::I32Store8(MemArg {
-                        align: 0,
-                        memory_index: 0,
-                        offset,
-                    }),
-                    ast::MemSize::Word => Instruction::I32Store(MemArg {
-                        align: 2,
-                        memory_index: 0,
-                        offset,
-                    }),
-                });
-            }
+        emit_expression(ctx, stmt);
+        if stmt.type_.is_some() {
+            ctx.function.instruction(&Instruction::Drop);
         }
     }
     if let Some(ref expr) = block.final_expression {
@@ -252,6 +212,55 @@ fn emit_block<'a>(ctx: &mut FunctionContext<'a>, block: &'a ast::Block) {
 
 fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression) {
     match &expr.expr {
+        ast::Expr::Let { value, name, defer, ..}  => {
+            if let Some(ref val) = value {
+                if *defer {
+                    ctx.deferred_inits.insert(name, val);
+                } else {
+                    emit_expression(ctx, val);
+                    ctx.function
+                        .instruction(&Instruction::LocalSet(*ctx.locals.get(name).unwrap()));
+                }
+            }
+        }
+        ast::Expr::Poke {
+            mem_location,
+            value,
+            ..
+        } => {
+            emit_expression(ctx, &mem_location.left);
+            emit_expression(ctx, value);
+            let offset = if let ast::Expr::I32Const(v) = mem_location.right.expr {
+                v as u32 as u64
+            } else {
+                unreachable!()
+            };
+            ctx.function.instruction(&match mem_location.size {
+                ast::MemSize::Byte => Instruction::I32Store8(MemArg {
+                    align: 0,
+                    memory_index: 0,
+                    offset,
+                }),
+                ast::MemSize::Word => Instruction::I32Store(MemArg {
+                    align: 2,
+                    memory_index: 0,
+                    offset,
+                }),
+            });
+        }
+        ast::Expr::UnaryOp { op, value } => {
+            use ast::UnaryOp::*;
+            use ast::Type::*;
+            match (value.type_.unwrap(), op) {
+                (I32, Negate) => {
+                    // TODO: try to improve this uglyness
+                    ctx.function.instruction(&Instruction::I32Const(0));
+                    emit_expression(ctx, value);
+                    ctx.function.instruction(&Instruction::I32Sub);
+                }
+                _ => unreachable!()
+            };
+        }
         ast::Expr::BinOp {
             left, op, right, ..
         } => {
@@ -300,7 +309,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 .iter()
                 .rev()
                 .enumerate()
-                .find(|(_, l)| l == label)
+                .find(|(_, l)| *l == label)
                 .unwrap()
                 .0;
             ctx.function.instruction(&Instruction::BrIf(depth as u32));
@@ -313,7 +322,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         }
         ast::Expr::LocalTee { name, value, .. } => {
             emit_expression(ctx, value);
-            let index = ctx.locals.get(*name).unwrap();
+            let index = ctx.locals.get(name).unwrap();
             ctx.function.instruction(&Instruction::LocalTee(*index));
         }
         ast::Expr::Loop { label, block, .. } => {
@@ -324,15 +333,15 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             ctx.labels.pop();
             ctx.function.instruction(&Instruction::End);
         }
-        ast::Expr::Variable { name, .. } => {
-            if let Some(index) = ctx.locals.get(*name) {
-                if let Some(expr) = ctx.deferred_inits.remove(*name) {
+        ast::Expr::Variable(name) => {
+            if let Some(index) = ctx.locals.get(name) {
+                if let Some(expr) = ctx.deferred_inits.remove(name.as_str()) {
                     emit_expression(ctx, expr);
                     ctx.function.instruction(&Instruction::LocalTee(*index));
                 } else {
                     ctx.function.instruction(&Instruction::LocalGet(*index));
                 }
-            } else if let Some(index) = ctx.globals.get(*name) {
+            } else if let Some(index) = ctx.globals.get(name.as_str()) {
                 ctx.function.instruction(&Instruction::GlobalGet(*index));
             } else {
                 unreachable!()
@@ -371,6 +380,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             emit_expression(ctx, condition);
             ctx.function.instruction(&Instruction::Select);
         }
+        ast::Expr::Error => unreachable!()
     }
 }
 

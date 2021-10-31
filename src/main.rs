@@ -6,8 +6,9 @@ mod ast;
 mod constfold;
 mod emit;
 mod parser;
-mod parser2;
 mod typecheck;
+
+type Span = std::ops::Range<usize>;
 
 fn main() -> Result<()> {
     let mut filename = PathBuf::from(
@@ -18,28 +19,14 @@ fn main() -> Result<()> {
     let mut input = String::new();
     File::open(&filename)?.read_to_string(&mut input)?;
 
-    if let Err(_) = parser2::parse(&input) {
-        bail!("Parse failed");
-    }
-
-    let mut script = match parser::parse(input.as_str()) {
+    let mut script = match parser::parse(&input) {
         Ok(script) => script,
-        Err(err) => {
-            bail!(
-                "parse error: {}",
-                nom::error::convert_error(input.as_str(), err)
-            );
-        }
+        Err(_) => bail!("Parse failed")
     };
 
     constfold::fold_script(&mut script);
-    if let Err(err) = typecheck::tc_script(&mut script) {
-        let line = input[..(input.len() - err.position.0)]
-            .chars()
-            .filter(|c| *c == '\n')
-            .count()
-            + 1;
-        bail!("{} in line {}", err.message, line);
+    if let Err(_) = typecheck::tc_script(&mut script, &input) {
+        bail!("Parse failed");
     }
     let wasm = emit::emit(&script);
 

@@ -1,34 +1,49 @@
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use std::collections::HashMap;
 
 use crate::ast;
+use crate::Span;
 use ast::Type::*;
 
-#[derive(Debug)]
-pub struct Error {
-    pub position: ast::Position,
-    pub message: String,
+type Result<T> = std::result::Result<T, ()>;
+
+struct Var {
+    span: Span,
+    type_: ast::Type,
 }
+type Vars = HashMap<String, Var>;
 
-type Result<T> = std::result::Result<T, Error>;
-
-type Vars<'a> = HashMap<&'a str, ast::Type>;
-
-pub fn tc_script(script: &mut ast::Script) -> Result<()> {
+pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
     let mut context = Context {
+        source,
         global_vars: HashMap::new(),
         local_vars: HashMap::new(),
+        block_stack: Vec::new(),
     };
+
+    let mut result = Ok(());
 
     for import in &script.imports {
         match import.type_ {
-            ast::ImportType::Variable { name, type_, .. } => {
-                if context.global_vars.contains_key(name) {
-                    return Err(Error {
-                        position: import.position,
-                        message: "Duplicate global variable".into(),
-                    });
+            ast::ImportType::Variable {
+                ref name, type_, ..
+            } => {
+                if let Some(Var { span, .. }) = context.global_vars.get(name) {
+                    result = report_duplicate_definition(
+                        "Global already defined",
+                        &import.span,
+                        span,
+                        source,
+                    );
+                } else {
+                    context.global_vars.insert(
+                        name.clone(),
+                        Var {
+                            type_,
+                            span: import.span.clone(),
+                        },
+                    );
                 }
-                context.global_vars.insert(name, type_);
             }
             // ast::ImportType::Function { .. } => todo!(),
             ast::ImportType::Memory(..) => (),
@@ -36,120 +51,261 @@ pub fn tc_script(script: &mut ast::Script) -> Result<()> {
     }
 
     for v in &script.global_vars {
-        if context.global_vars.contains_key(v.name) {
-            return Err(Error {
-                position: v.position,
-                message: "Duplicate global variable".into(),
-            });
+        if let Some(Var { span, .. }) = context.global_vars.get(&v.name) {
+            result = report_duplicate_definition("Global already defined", &v.span, span, source);
+        } else {
+            context.global_vars.insert(
+                v.name.clone(),
+                Var {
+                    type_: v.type_,
+                    span: v.span.clone(),
+                },
+            );
         }
-        context.global_vars.insert(v.name, v.type_);
     }
 
     for f in &mut script.functions {
         context.local_vars.clear();
         for (name, type_) in &f.params {
-            if context.local_vars.contains_key(name) || context.global_vars.contains_key(name) {
-                return Err(Error {
-                    position: f.position,
-                    message: format!("Variable already defined '{}'", name),
-                });
+            if let Some(Var { span, .. }) = context
+                .local_vars
+                .get(name)
+                .or_else(|| context.global_vars.get(name))
+            {
+                result =
+                    report_duplicate_definition("Variable already defined", &f.span, span, source);
+            } else {
+                context.local_vars.insert(
+                    name.clone(),
+                    Var {
+                        type_: *type_,
+                        span: f.span.clone(),
+                    },
+                );
             }
-            context.local_vars.insert(name, *type_);
         }
 
         tc_block(&mut context, &mut f.body)?;
     }
 
-    Ok(())
+    result
 }
 
 struct Context<'a> {
-    global_vars: Vars<'a>,
-    local_vars: Vars<'a>,
+    source: &'a str,
+    global_vars: Vars,
+    local_vars: Vars,
+    block_stack: Vec<String>,
 }
 
-fn tc_block<'a>(context: &mut Context<'a>, block: &mut ast::Block<'a>) -> Result<()> {
+fn tc_block(context: &mut Context, block: &mut ast::Block) -> Result<()> {
+    let mut result = Ok(());
     for stmt in &mut block.statements {
-        match *stmt {
-            ast::Statement::Expression(ref mut expr) => tc_expression(context, expr)?,
-            ast::Statement::LocalVariable(ref mut lv) => {
-                if let Some(ref mut value) = lv.value {
-                    tc_expression(context, value)?;
-                    if lv.type_.is_none() {
-                        lv.type_ = value.type_;
-                    } else if lv.type_ != value.type_ {
-                        return Err(Error {
-                            position: lv.position,
-                            message: "Mismatched types".into(),
-                        });
-                    }
-                }
-                if let Some(type_) = lv.type_ {
-                    if context.local_vars.contains_key(lv.name)
-                        || context.global_vars.contains_key(lv.name)
-                    {
-                        return Err(Error {
-                            position: lv.position,
-                            message: format!("Variable '{}' already defined", lv.name),
-                        });
-                    }
-                    context.local_vars.insert(lv.name, type_);
-                } else {
-                    return Err(Error {
-                        position: lv.position,
-                        message: "Missing type".into(),
-                    });
-                }
-            }
-            ast::Statement::Poke {
-                position,
-                ref mut mem_location,
-                ref mut value,
-            } => {
-                tc_mem_location(context, mem_location)?;
-                tc_expression(context, value)?;
-                if value.type_ != Some(I32) {
-                    return Err(Error {
-                        position,
-                        message: "Type mismatch".into(),
-                    });
-                }
-            }
+        if tc_expression(context, stmt).is_err() {
+            result = Err(());
         }
     }
     if let Some(ref mut expr) = block.final_expression {
         tc_expression(context, expr)?;
     }
-    Ok(())
+    result
 }
 
-fn tc_expression<'a>(context: &mut Context<'a>, expr: &mut ast::Expression<'a>) -> Result<()> {
+fn report_duplicate_definition(
+    msg: &str,
+    span: &Span,
+    prev_span: &Span,
+    source: &str,
+) -> Result<()> {
+    Report::build(ReportKind::Error, (), span.start)
+        .with_message(msg)
+        .with_label(
+            Label::new(span.clone())
+                .with_message(msg)
+                .with_color(Color::Red),
+        )
+        .with_label(
+            Label::new(prev_span.clone())
+                .with_message("Previous definition was here")
+                .with_color(Color::Yellow),
+        )
+        .finish()
+        .eprint(Source::from(source))
+        .unwrap();
+    Err(())
+}
+
+fn type_mismatch(
+    type1: ast::Type,
+    span1: &Span,
+    type2: Option<ast::Type>,
+    span2: &Span,
+    source: &str,
+) -> Result<()> {
+    Report::build(ReportKind::Error, (), span2.start)
+        .with_message("Type mismatch")
+        .with_label(
+            Label::new(span1.clone())
+                .with_message(format!("Expected type {:?}...", type1))
+                .with_color(Color::Yellow),
+        )
+        .with_label(
+            Label::new(span2.clone())
+                .with_message(format!(
+                    "...but found type {}",
+                    type2
+                        .map(|t| format!("{:?}", t))
+                        .unwrap_or("void".to_string())
+                ))
+                .with_color(Color::Red),
+        )
+        .finish()
+        .eprint(Source::from(source))
+        .unwrap();
+    Err(())
+}
+
+fn expected_type(span: &Span, source: &str) -> Result<()> {
+    Report::build(ReportKind::Error, (), span.start)
+        .with_message("Expected value but found expression of type void")
+        .with_label(
+            Label::new(span.clone())
+                .with_message("Expected value but found expression of type void")
+                .with_color(Color::Red),
+        )
+        .finish()
+        .eprint(Source::from(source))
+        .unwrap();
+    Err(())
+}
+
+fn unknown_variable(span: &Span, source: &str) -> Result<()> {
+    Report::build(ReportKind::Error, (), span.start)
+        .with_message("Unknown variable")
+        .with_label(
+            Label::new(span.clone())
+                .with_message("Unknown variable")
+                .with_color(Color::Red),
+        )
+        .finish()
+        .eprint(Source::from(source))
+        .unwrap();
+    Err(())
+}
+
+fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()> {
     expr.type_ = match expr.expr {
+        ast::Expr::Let {
+            ref mut value,
+            ref mut type_,
+            ref name,
+            ..
+        } => {
+            if let Some(ref mut value) = value {
+                tc_expression(context, value)?;
+                if let Some(type_) = type_ {
+                    if Some(*type_) != value.type_ {
+                        return type_mismatch(
+                            *type_,
+                            &expr.span,
+                            value.type_,
+                            &value.span,
+                            context.source,
+                        );
+                    }
+                } else if value.type_.is_none() {
+                    return expected_type(&value.span, context.source);
+                } else {
+                    *type_ = value.type_;
+                }
+            }
+            if let Some(type_) = type_ {
+                if let Some(Var { span, .. }) = context
+                    .local_vars
+                    .get(name)
+                    .or_else(|| context.global_vars.get(name))
+                {
+                    return report_duplicate_definition(
+                        "Variable already defined",
+                        &expr.span,
+                        span,
+                        context.source,
+                    );
+                }
+                context.local_vars.insert(
+                    name.clone(),
+                    Var {
+                        type_: *type_,
+                        span: expr.span.clone(),
+                    },
+                );
+            } else {
+                Report::build(ReportKind::Error, (), expr.span.start)
+                    .with_message("Type missing")
+                    .with_label(
+                        Label::new(expr.span.clone())
+                            .with_message("Type missing")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .eprint(Source::from(context.source))
+                    .unwrap();
+                return Err(());
+            }
+            None
+        }
+        ast::Expr::Poke {
+            ref mut mem_location,
+            ref mut value,
+        } => {
+            tc_mem_location(context, mem_location)?;
+            tc_expression(context, value)?;
+            if value.type_ != Some(I32) {
+                return type_mismatch(I32, &expr.span, value.type_, &value.span, context.source);
+            }
+            None
+        }
         ast::Expr::I32Const(_) => Some(ast::Type::I32),
         ast::Expr::F32Const(_) => Some(ast::Type::F32),
+        ast::Expr::UnaryOp {
+            op: _,
+            ref mut value,
+        } => {
+            tc_expression(context, value)?;
+            todo!();
+        }
         ast::Expr::BinOp {
-            position,
             op,
             ref mut left,
             ref mut right,
         } => {
             tc_expression(context, left)?;
             tc_expression(context, right)?;
-            if left.type_.is_none() || left.type_ != right.type_ {
-                return Err(Error {
-                    position,
-                    message: "Type mismatch".into(),
-                });
+            if let Some(type_) = left.type_ {
+                if left.type_ != right.type_ {
+                    return type_mismatch(
+                        type_,
+                        &left.span,
+                        right.type_,
+                        &right.span,
+                        context.source,
+                    );
+                }
+            } else {
+                return expected_type(&left.span, context.source);
             }
             use ast::BinOp::*;
             match op {
                 Add | Sub | Mul | Div => left.type_,
                 Rem | And | Or | Xor => {
                     if left.type_ != Some(I32) {
-                        return Err(Error {
-                            position,
-                            message: "Unsupported type".into(),
-                        });
+                        return type_mismatch(
+                            I32,
+                            &left.span,
+                            left.type_,
+                            &left.span,
+                            context.source,
+                        );
                     } else {
                         left.type_
                     }
@@ -157,117 +313,136 @@ fn tc_expression<'a>(context: &mut Context<'a>, expr: &mut ast::Expression<'a>) 
                 Eq | Ne | Lt | Le | Gt | Ge => Some(I32),
             }
         }
-        ast::Expr::Variable { position, name } => {
-            if let Some(&type_) = context
+        ast::Expr::Variable(ref name) => {
+            if let Some(&Var { type_, .. }) = context
                 .global_vars
                 .get(name)
                 .or_else(|| context.local_vars.get(name))
             {
                 Some(type_)
             } else {
-                return Err(Error {
-                    position,
-                    message: format!("Variable '{}' not found", name),
-                });
+                return unknown_variable(&expr.span, context.source);
             }
         }
         ast::Expr::LocalTee {
-            position,
-            name,
+            ref name,
             ref mut value,
         } => {
             tc_expression(context, value)?;
-            if let Some(&type_) = context.local_vars.get(name) {
+            if let Some(&Var {
+                type_, ref span, ..
+            }) = context.local_vars.get(name)
+            {
                 if value.type_ != Some(type_) {
-                    return Err(Error {
-                        position,
-                        message: "Type mismatch".into(),
-                    });
+                    return type_mismatch(type_, span, value.type_, &value.span, context.source);
                 }
                 Some(type_)
             } else {
-                return Err(Error {
-                    position,
-                    message: format!("No local variable '{}' found", name),
-                });
+                return unknown_variable(&expr.span, context.source);
             }
         }
         ast::Expr::Loop {
-            position: _,
-            label: _,
+            ref label,
             ref mut block,
         } => {
+            context.block_stack.push(label.clone());
             tc_block(context, block)?;
+            context.block_stack.pop();
             block.final_expression.as_ref().and_then(|e| e.type_)
         }
         ast::Expr::BranchIf {
-            position,
             ref mut condition,
-            label: _,
+            ref label,
         } => {
             tc_expression(context, condition)?;
             if condition.type_ != Some(I32) {
-                return Err(Error {
-                    position,
-                    message: "Condition has to be i32".into(),
-                });
+                return type_mismatch(
+                    I32,
+                    &expr.span,
+                    condition.type_,
+                    &condition.span,
+                    context.source,
+                );
+            }
+            if !context.block_stack.contains(label) {
+                Report::build(ReportKind::Error, (), expr.span.start)
+                    .with_message("Label not found")
+                    .with_label(
+                        Label::new(expr.span.clone())
+                            .with_message("Label not found")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .eprint(Source::from(context.source))
+                    .unwrap();
+                return Err(());
             }
             None
         }
         ast::Expr::Cast {
-            position,
             ref mut value,
             type_,
         } => {
             tc_expression(context, value)?;
             if value.type_.is_none() {
-                return Err(Error {
-                    position,
-                    message: "Cannot cast void".into(),
-                });
+                return expected_type(&expr.span, context.source);
             }
             Some(type_)
         }
         ast::Expr::FuncCall {
-            position,
-            name,
+            ref name,
             ref mut params,
         } => {
             if let Some((ptypes, rtype)) = builtin_function_types(name) {
                 if params.len() != ptypes.len() {
-                    return Err(Error {
-                        position,
-                        message: format!(
+                    Report::build(ReportKind::Error, (), expr.span.start)
+                        .with_message(format!(
                             "Expected {} parameters but found {}",
                             ptypes.len(),
                             params.len()
-                        ),
-                    });
+                        ))
+                        .with_label(
+                            Label::new(expr.span.clone())
+                                .with_message(format!(
+                                    "Expected {} parameters but found {}",
+                                    ptypes.len(),
+                                    params.len()
+                                ))
+                                .with_color(Color::Red),
+                        )
+                        .finish()
+                        .eprint(Source::from(context.source))
+                        .unwrap();
+                    return Err(());
                 }
-                for (index, (ptype, param)) in ptypes.iter().zip(params.iter_mut()).enumerate() {
+                for (ptype, param) in ptypes.iter().zip(params.iter_mut()) {
                     tc_expression(context, param)?;
-                    if param.type_.is_none() || param.type_.unwrap() != *ptype {
-                        return Err(Error {
-                            position,
-                            message: format!(
-                                "Param {} is {:?} but should be {:?}",
-                                index + 1,
-                                param.type_,
-                                ptype
-                            ),
-                        });
+                    if param.type_ != Some(*ptype) {
+                        return type_mismatch(
+                            *ptype,
+                            &expr.span,
+                            param.type_,
+                            &param.span,
+                            context.source,
+                        );
                     }
                 }
                 rtype
             } else {
-                return Err(Error {
-                    position,
-                    message: format!("Unknown function '{}'", name),
-                });
+                Report::build(ReportKind::Error, (), expr.span.start)
+                    .with_message(format!("Unknown function {}", name))
+                    .with_label(
+                        Label::new(expr.span.clone())
+                            .with_message(format!("Unknown function {}", name))
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .eprint(Source::from(context.source))
+                    .unwrap();
+                return Err(());
             }
         }
         ast::Expr::Select {
-            position,
             ref mut condition,
             ref mut if_true,
             ref mut if_false,
@@ -276,40 +451,62 @@ fn tc_expression<'a>(context: &mut Context<'a>, expr: &mut ast::Expression<'a>) 
             tc_expression(context, if_true)?;
             tc_expression(context, if_false)?;
             if condition.type_ != Some(ast::Type::I32) {
-                return Err(Error {
-                    position,
-                    message: "Condition of select has to be of type i32".into(),
-                });
+                return type_mismatch(
+                    I32,
+                    &condition.span,
+                    condition.type_,
+                    &condition.span,
+                    context.source,
+                );
             }
-            if if_true.type_ != if_false.type_ {
-                return Err(Error {
-                    position,
-                    message: "Types of select branches differ".into(),
-                });
-            }
-            if if_true.type_.is_none() {
-                return Err(Error {
-                    position,
-                    message: "Types of select branches cannot be void".into(),
-                });
+            if let Some(true_type) = if_true.type_ {
+                if if_true.type_ != if_false.type_ {
+                    return type_mismatch(
+                        true_type,
+                        &if_true.span,
+                        if_false.type_,
+                        &if_false.span,
+                        context.source,
+                    );
+                }
+            } else {
+                return expected_type(&if_true.span, context.source);
             }
             if_true.type_
         }
+        ast::Expr::Error => unreachable!(),
     };
     Ok(())
 }
 
 fn tc_mem_location<'a>(
     context: &mut Context<'a>,
-    mem_location: &mut ast::MemoryLocation<'a>,
+    mem_location: &mut ast::MemoryLocation,
 ) -> Result<()> {
     tc_expression(context, &mut mem_location.left)?;
     tc_expression(context, &mut mem_location.right)?;
-    if mem_location.left.type_ != Some(I32) || mem_location.right.type_ != Some(I32) {
-        return Err(Error {
-            position: mem_location.position,
-            message: "Type mismatch".into(),
-        });
+    if mem_location.left.type_ != Some(I32) {
+        return type_mismatch(
+            I32,
+            &mem_location.left.span,
+            mem_location.left.type_,
+            &mem_location.left.span,
+            context.source,
+        );
+    }
+    if let ast::Expr::I32Const(_) = mem_location.right.expr {
+    } else {
+        Report::build(ReportKind::Error, (), mem_location.right.span.start)
+            .with_message("Expected I32 constant")
+            .with_label(
+                Label::new(mem_location.right.span.clone())
+                    .with_message("Expected I32 constant")
+                    .with_color(Color::Red),
+            )
+            .finish()
+            .eprint(Source::from(context.source))
+            .unwrap();
+        return Err(());
     }
     Ok(())
 }

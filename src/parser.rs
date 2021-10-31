@@ -1,555 +1,641 @@
+use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
+use chumsky::{prelude::*, stream::Stream};
+use std::fmt;
 use crate::ast;
-use nom::{
-    branch::alt,
-    bytes::complete::tag,
-    character::complete::{alpha1, alphanumeric1, char, digit1, multispace0, none_of},
-    combinator::{self, cut, map, map_res, not, opt, peek, recognize, value},
-    error::VerboseError,
-    multi::{fold_many0, many0, many1, separated_list0},
-    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
-    Finish,
-};
+use crate::Span;
 
-type IResult<'a, O> = nom::IResult<&'a str, O, VerboseError<&'a str>>;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Token {
+    Import,
+    Export,
+    Fn,
+    Let,
+    Memory,
+    Global,
+    Mut,
+    Loop,
+    BranchIf,
+    Defer,
+    As,
+    Select,
+    Ident(String),
+    Str(String),
+    Int(i32),
+    Float(String),
+    Op(String),
+    Ctrl(char),
+}
 
-pub fn parse(s: &str) -> Result<ast::Script, VerboseError<&str>> {
-    let (_, script) = combinator::all_consuming(terminated(script, multispace0))(s).finish()?;
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Token::Import => write!(f, "import"),
+            Token::Export => write!(f, "export"),
+            Token::Fn => write!(f, "fn"),
+            Token::Let => write!(f, "let"),
+            Token::Memory => write!(f, "memory"),
+            Token::Global => write!(f, "global"),
+            Token::Mut => write!(f, "mut"),
+            Token::Loop => write!(f, "loop"),
+            Token::BranchIf => write!(f, "branch_if"),
+            Token::Defer => write!(f, "defer"),
+            Token::As => write!(f, "as"),
+            Token::Select => write!(f, "select"),
+            Token::Ident(s) => write!(f, "{}", s),
+            Token::Str(s) => write!(f, "{:?}", s),
+            Token::Int(v) => write!(f, "{}", v),
+            Token::Float(v) => write!(f, "{}", v),
+            Token::Op(s) => write!(f, "{}", s),
+            Token::Ctrl(c) => write!(f, "{}", c),
+        }
+    }
+}
+
+pub fn parse(source: &str) -> Result<ast::Script, ()> {
+    let tokens = match lexer().parse(source) {
+        Ok(tokens) => tokens,
+        Err(errors) => {
+            report_errors(
+                errors
+                    .into_iter()
+                    .map(|e| e.map(|c| c.to_string()))
+                    .collect(),
+                source,
+            );
+            return Err(());
+        }
+    };
+
+    let source_len = source.chars().count();
+    let script = match script_parser().parse(Stream::from_iter(
+        source_len..source_len + 1,
+        tokens.into_iter(),
+    )) {
+        Ok(script) => script,
+        Err(errors) => {
+            report_errors(
+                errors
+                    .into_iter()
+                    .map(|e| e.map(|t| t.to_string()))
+                    .collect(),
+                source,
+            );
+            return Err(());
+        }
+    };
     Ok(script)
 }
 
-fn script(s: &str) -> IResult<ast::Script> {
-    let (s, items) = many0(top_level_item)(s)?;
-    let mut imports = vec![];
-    let mut global_vars = vec![];
-    let mut functions = vec![];
-    for item in items {
-        match item {
-            ast::TopLevelItem::Import(i) => imports.push(i),
-            ast::TopLevelItem::GlobalVar(v) => global_vars.push(v),
-            ast::TopLevelItem::Function(f) => functions.push(f),
-        }
-    }
-    Ok((
-        s,
-        ast::Script {
-            imports,
-            global_vars,
-            functions,
-        },
-    ))
-}
+fn report_errors(errors: Vec<Simple<String>>, source: &str) {
+    for error in errors {
+        let report = Report::build(ReportKind::Error, (), error.span().start());
 
-fn top_level_item(s: &str) -> IResult<ast::TopLevelItem> {
-    alt((
-        map(import, ast::TopLevelItem::Import),
-        map(function, ast::TopLevelItem::Function),
-        map(global_var, ast::TopLevelItem::GlobalVar),
-    ))(s)
-}
-
-fn import(s: &str) -> IResult<ast::Import> {
-    let (s, position) = ws(position)(s)?;
-    let (s, _) = tag("import")(s)?;
-    let (s, import) = ws(delimited(
-        char('"'),
-        recognize(many1(none_of("\""))),
-        char('"'),
-    ))(s)?;
-    let (s, type_) = alt((
-        map_res(
-            preceded(
-                ws(tag("memory")),
-                delimited(ws(char('(')), ws(digit1), ws(char(')'))),
-            ),
-            |num| num.parse().map(ast::ImportType::Memory),
-        ),
-        map(
-            preceded(
-                ws(tag("global")),
-                pair(
-                    pair(opt(ws(tag("mut"))), identifier),
-                    preceded(ws(char(':')), type_),
+        let report = match error.reason() {
+            chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
+                .with_message(format!(
+                    "Unclosed delimiter {}",
+                    delimiter.fg(Color::Yellow)
+                ))
+                .with_label(
+                    Label::new(span.clone())
+                        .with_message(format!(
+                            "Unclosed delimiter {}",
+                            delimiter.fg(Color::Yellow)
+                        ))
+                        .with_color(Color::Yellow),
+                )
+                .with_label(
+                    Label::new(error.span())
+                        .with_message(format!(
+                            "Must be closed before this {}",
+                            error
+                                .found()
+                                .unwrap_or(&"end of file".to_string())
+                                .fg(Color::Red)
+                        ))
+                        .with_color(Color::Red),
                 ),
+            chumsky::error::SimpleReason::Unexpected => report
+                .with_message(format!(
+                    "{}, expected one of {}",
+                    if error.found().is_some() {
+                        "Unexpected token in input"
+                    } else {
+                        "Unexpted end of input"
+                    },
+                    if error.expected().len() == 0 {
+                        "end of input".to_string()
+                    } else {
+                        error
+                            .expected()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                ))
+                .with_label(
+                    Label::new(error.span())
+                        .with_message(format!(
+                            "Unexpected token {}",
+                            error
+                                .found()
+                                .unwrap_or(&"end of file".to_string())
+                                .fg(Color::Red)
+                        ))
+                        .with_color(Color::Red),
+                ),
+            chumsky::error::SimpleReason::Custom(msg) => report.with_message(msg).with_label(
+                Label::new(error.span())
+                    .with_message(format!("{}", msg.fg(Color::Red)))
+                    .with_color(Color::Red),
             ),
-            |((mutable, name), type_)| ast::ImportType::Variable {
-                name,
+        };
+
+        report.finish().eprint(Source::from(source)).unwrap();
+    }
+}
+
+fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
+    let float = text::int(10)
+        .chain::<char, _, _>(just('.').chain(text::digits(10)))
+        .collect::<String>()
+        .map(Token::Float);
+
+    let int = text::int(10).map(|s: String| Token::Int(s.parse().unwrap()));
+
+    let str_ = just('"')
+        .ignore_then(filter(|c| *c != '"').repeated())
+        .then_ignore(just('"'))
+        .collect::<String>()
+        .map(Token::Str);
+
+    let op = one_of("+-*/%&^|<=>".chars())
+        .repeated()
+        .at_least(1)
+        .or(just(':').chain(just('=')))
+        .collect::<String>()
+        .map(Token::Op);
+
+    let ctrl = one_of("(){};,:?!".chars()).map(Token::Ctrl);
+
+    let ident = text::ident().map(|ident: String| match ident.as_str() {
+        "import" => Token::Import,
+        "export" => Token::Export,
+        "fn" => Token::Fn,
+        "let" => Token::Let,
+        "memory" => Token::Memory,
+        "global" => Token::Global,
+        "mut" => Token::Mut,
+        "loop" => Token::Loop,
+        "branch_if" => Token::BranchIf,
+        "defer" => Token::Defer,
+        "as" => Token::As,
+        "select" => Token::Select,
+        _ => Token::Ident(ident),
+    });
+
+    let single_line =
+        seq::<_, _, Simple<char>>("//".chars()).then_ignore(take_until(text::newline()));
+
+    let multi_line =
+        seq::<_, _, Simple<char>>("/*".chars()).then_ignore(take_until(seq("*/".chars())));
+
+    let comment = single_line.or(multi_line);
+
+    let token = float
+        .or(int)
+        .or(str_)
+        .or(op)
+        .or(ctrl)
+        .or(ident)
+        .recover_with(skip_then_retry_until([]));
+
+    token
+        .map_with_span(|tok, span| (tok, span))
+        .padded()
+        .padded_by(comment.padded().repeated())
+        .repeated()
+}
+
+fn map_token<O>(
+    f: impl Fn(&Token) -> Option<O> + 'static + Clone,
+) -> impl Parser<Token, O, Error = Simple<Token>> + Clone {
+    filter_map(move |span, tok: Token| {
+        if let Some(output) = f(&tok) {
+            Ok(output)
+        } else {
+            Err(Simple::expected_input_found(span, Vec::new(), Some(tok)))
+        }
+    })
+}
+
+fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clone {
+    recursive(|block| {
+        let mut block_expression = None;
+        let expression = recursive(|expression| {
+            let val = map_token(|tok| match tok {
+                Token::Int(v) => Some(ast::Expr::I32Const(*v)),
+                Token::Float(v) => Some(ast::Expr::F32Const(v.parse().unwrap())),
+                _ => None,
+            })
+            .labelled("value");
+
+            let variable = filter_map(|span, tok| match tok {
+                Token::Ident(id) => Ok(ast::Expr::Variable(id)),
+                _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+            })
+            .labelled("variable");
+
+            let ident = filter_map(|span, tok| match tok {
+                Token::Ident(id) => Ok(id),
+                _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+            })
+            .labelled("identifier");
+
+            let local_tee = ident
+                .then(just(Token::Op(":=".to_string())).ignore_then(expression.clone()))
+                .map(|(name, expr)| ast::Expr::LocalTee {
+                    name,
+                    value: Box::new(expr),
+                }).boxed();
+
+            let loop_expr = just(Token::Loop)
+                .ignore_then(ident)
+                .then(
+                    block
+                        .clone()
+                        .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
+                )
+                .map(|(label, block)| ast::Expr::Loop {
+                    label,
+                    block: Box::new(block),
+                });
+
+            let block_expr = loop_expr.boxed();
+
+            block_expression = Some(block_expr.clone());
+
+            let branch_if = just(Token::BranchIf)
+                .ignore_then(expression.clone())
+                .then_ignore(just(Token::Ctrl(':')))
+                .then(ident)
+                .map(|(condition, label)| ast::Expr::BranchIf {
+                    condition: Box::new(condition),
+                    label,
+                }).boxed();
+
+            let let_ = just(Token::Let)
+                .ignore_then(just(Token::Defer).or_not())
+                .then(ident.clone())
+                .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
+                .then(
+                    just(Token::Op("=".to_string()))
+                        .ignore_then(expression.clone())
+                        .or_not(),
+                )
+                .map(|(((defer, name), type_), value)| ast::Expr::Let {
+                    name,
+                    type_,
+                    value: value.map(Box::new),
+                    defer: defer.is_some(),
+                }).boxed();
+
+            let tee = ident
+                .clone()
+                .then_ignore(just(Token::Op(":=".to_string())))
+                .then(expression.clone())
+                .map(|(name, value)| ast::Expr::LocalTee {
+                    name,
+                    value: Box::new(value),
+                }).boxed();
+
+            let select = just(Token::Select)
+                .ignore_then(
+                    expression
+                        .clone()
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(expression.clone())
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(expression.clone())
+                        .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                )
+                .map(|((condition, if_true), if_false)| ast::Expr::Select {
+                    condition: Box::new(condition),
+                    if_true: Box::new(if_true),
+                    if_false: Box::new(if_false),
+                }).boxed();
+
+            let function_call = ident
+                .clone()
+                .then(
+                    expression
+                        .clone()
+                        .separated_by(just(Token::Ctrl(',')))
+                        .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                )
+                .map(|(name, params)| ast::Expr::FuncCall { name, params }).boxed();
+
+            let atom = val
+                .or(tee)
+                .or(function_call)
+                .or(variable)
+                .or(local_tee)
+                .or(block_expr)
+                .or(branch_if)
+                .or(let_)
+                .or(select)
+                .map_with_span(|expr, span| expr.with_span(span))
+                .or(expression
+                    .clone()
+                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')))
+                .recover_with(nested_delimiters(
+                    Token::Ctrl('('),
+                    Token::Ctrl(')'),
+                    [(Token::Ctrl('{'), Token::Ctrl('}'))],
+                    |span| ast::Expr::Error.with_span(span),
+                )).boxed();
+            
+            let unary_op = just(Token::Op("-".to_string()))
+                .to(ast::UnaryOp::Negate)
+                .map_with_span(|op, span| (op, span))
+                .repeated()
+                .then(atom)
+                .map(|(ops, value)| {
+                    ops.into_iter().rev().fold(value, |acc, (op, span)| {
+                        let span = span.start..acc.span.end;
+                        ast::Expr::UnaryOp {
+                            op,
+                            value: Box::new(acc),
+                        }
+                        .with_span(span)
+                    })
+                }).boxed();
+
+            let op_cast = unary_op
+                .clone()
+                .then(
+                    just(Token::As)
+                        .ignore_then(type_parser())
+                        .map_with_span(|type_, span| (type_, span))
+                        .repeated(),
+                )
+                .foldl(|value, (type_, span)| {
+                    ast::Expr::Cast {
+                        value: Box::new(value),
+                        type_,
+                    }
+                    .with_span(span)
+                }).boxed();
+
+            let mem_size = just(Token::Ctrl('?'))
+                .to(ast::MemSize::Byte)
+                .or(just(Token::Ctrl('!')).to(ast::MemSize::Word));
+
+            let memory_op = op_cast
+                .clone()
+                .then(
+                    mem_size
+                        .then(op_cast.clone())
+                        .then_ignore(just(Token::Op("=".to_string())))
+                        .then(expression.clone())
+                        .repeated(),
+                )
+                .foldl(|left, ((size, right), value)| {
+                    let span = left.span.start..value.span.end;
+                    ast::Expr::Poke {
+                        mem_location: ast::MemoryLocation {
+                            span: span.clone(),
+                            left: Box::new(left),
+                            size,
+                            right: Box::new(right),
+                        },
+                        value: Box::new(value),
+                    }
+                    .with_span(span)
+                }).boxed();
+
+            let op_product = memory_op
+                .clone()
+                .then(
+                    just(Token::Op("*".to_string()))
+                        .to(ast::BinOp::Mul)
+                        .or(just(Token::Op("/".to_string())).to(ast::BinOp::Div))
+                        .or(just(Token::Op("%".to_string())).to(ast::BinOp::Rem))
+                        .then(memory_op.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
+                    .with_span(span)
+                }).boxed();
+
+            let op_sum = op_product
+                .clone()
+                .then(
+                    just(Token::Op("+".to_string()))
+                        .to(ast::BinOp::Add)
+                        .or(just(Token::Op("-".to_string())).to(ast::BinOp::Sub))
+                        .then(op_product.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
+                    .with_span(span)
+                }).boxed();
+
+            let op_cmp = op_sum
+                .clone()
+                .then(
+                    just(Token::Op("==".to_string()))
+                        .to(ast::BinOp::Eq)
+                        .or(just(Token::Op("!=".to_string())).to(ast::BinOp::Ne))
+                        .or(just(Token::Op("<".to_string())).to(ast::BinOp::Lt))
+                        .or(just(Token::Op("<=".to_string())).to(ast::BinOp::Le))
+                        .or(just(Token::Op(">".to_string())).to(ast::BinOp::Gt))
+                        .or(just(Token::Op(">=".to_string())).to(ast::BinOp::Ge))
+                        .then(op_sum.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
+                    .with_span(span)
+                }).boxed();
+
+            let op_bit = op_cmp
+                .clone()
+                .then(
+                    just(Token::Op("&".to_string()))
+                        .to(ast::BinOp::And)
+                        .or(just(Token::Op("|".to_string())).to(ast::BinOp::Or))
+                        .or(just(Token::Op("^".to_string())).to(ast::BinOp::Xor))
+                        .then(op_cmp.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
+                    .with_span(span)
+                }).boxed();
+
+            op_bit
+        });
+
+        let block_expression = block_expression.unwrap();
+
+        expression
+            .clone()
+            .then_ignore(just(Token::Ctrl(';')))
+            .or(block_expression.map_with_span(|expr, span| expr.with_span(span)))
+            .repeated()
+            .then(expression.clone().or_not())
+            .map(|(statements, final_expression)| ast::Block {
+                statements,
+                final_expression: final_expression.map(|e| Box::new(e)),
+            })
+    })
+}
+
+fn type_parser() -> impl Parser<Token, ast::Type, Error = Simple<Token>> + Clone {
+    filter_map(|span, tok| match tok {
+        Token::Ident(id) if id == "i32" => Ok(ast::Type::I32),
+        Token::Ident(id) if id == "i64" => Ok(ast::Type::I64),
+        Token::Ident(id) if id == "f32" => Ok(ast::Type::F32),
+        Token::Ident(id) if id == "f64" => Ok(ast::Type::F64),
+        _ => Err(Simple::expected_input_found(
+            span,
+            vec![
+                Token::Ident("i32".into()),
+                Token::Ident("i64".into()),
+                Token::Ident("f32".into()),
+                Token::Ident("f64".into()),
+            ],
+            Some(tok),
+        )),
+    })
+}
+
+fn top_level_item_parser() -> impl Parser<Token, ast::TopLevelItem, Error = Simple<Token>> + Clone {
+    let integer = map_token(|tok| match tok {
+        Token::Int(v) => Some(*v),
+        _ => None,
+    });
+
+    let string = map_token(|tok| match tok {
+        Token::Str(s) => Some(s.clone()),
+        _ => None,
+    });
+
+    let identifier = map_token(|tok| match tok {
+        Token::Ident(id) => Some(id.clone()),
+        _ => None,
+    });
+
+    let import_memory = just(Token::Memory)
+        .ignore_then(integer.delimited_by(Token::Ctrl('('), Token::Ctrl(')')))
+        .map(|min_size| ast::ImportType::Memory(min_size as u32));
+
+    let import_global = just(Token::Global)
+        .ignore_then(just(Token::Mut).or_not())
+        .then(identifier.clone())
+        .then_ignore(just(Token::Ctrl(':')))
+        .then(type_parser())
+        .map(|((mut_opt, name), type_)| ast::ImportType::Variable {
+            mutable: mut_opt.is_some(),
+            name,
+            type_,
+        });
+
+    let import = just(Token::Import)
+        .ignore_then(string)
+        .then(import_memory.or(import_global))
+        .then_ignore(just(Token::Ctrl(';')))
+        .map_with_span(|(import, type_), span| {
+            ast::TopLevelItem::Import(ast::Import {
+                span,
+                import,
                 type_,
-                mutable: mutable.is_some(),
-            },
-        ),
-    ))(s)?;
-    let (s, _) = ws(char(';'))(s)?;
+            })
+        });
 
-    Ok((
-        s,
-        ast::Import {
-            position,
-            import,
-            type_,
-        },
-    ))
-}
+    let parameter = identifier
+        .clone()
+        .then_ignore(just(Token::Ctrl(':')))
+        .then(type_parser());
 
-fn global_var(s: &str) -> IResult<ast::GlobalVar> {
-    let (s, _) = ws(tag("global"))(s)?;
-    let (s, position) = ws(position)(s)?;
-    let (s, name) = identifier(s)?;
-    let (s, type_) = preceded(ws(char(':')), type_)(s)?;
-    let (s, _) = ws(char(';'))(s)?;
-
-    Ok((
-        s,
-        ast::GlobalVar {
-            position,
-            name: name,
-            type_,
-        },
-    ))
-}
-
-fn function(s: &str) -> IResult<ast::Function> {
-    let (s, export) = map(ws(opt(tag("export"))), |e| e.is_some())(s)?;
-    let (s, _) = ws(tag("fn"))(s)?;
-    cut(move |s| {
-        let (s, position) = ws(position)(s)?;
-        let (s, name) = identifier(s)?;
-        let (s, params) = delimited(
-            ws(char('(')),
-            separated_list0(
-                ws(char(',')),
-                pair(map(identifier, |i| i), preceded(ws(tag(":")), type_)),
-            ),
-            ws(char(')')),
-        )(s)?;
-        let (s, type_) = opt(preceded(ws(tag("->")), type_))(s)?;
-        let (s, body) = block(s)?;
-
-        Ok((
-            s,
-            ast::Function {
-                position,
-                export,
-                name: name,
+    let function = just(Token::Export)
+        .or_not()
+        .then_ignore(just(Token::Fn))
+        .then(identifier.clone())
+        .then(
+            parameter
+                .separated_by(just(Token::Ctrl(',')))
+                .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+        )
+        .then(
+            just(Token::Op("->".to_string()))
+                .ignore_then(type_parser())
+                .or_not(),
+        )
+        .then(block_parser().delimited_by(Token::Ctrl('{'), Token::Ctrl('}')))
+        .map_with_span(|((((export, name), params), type_), body), span| {
+            ast::TopLevelItem::Function(ast::Function {
+                span,
                 params,
+                export: export.is_some(),
+                name,
                 type_,
                 body,
-            },
-        ))
-    })(s)
+            })
+        });
+
+    let global = just(Token::Global)
+        .ignore_then(identifier.clone())
+        .then_ignore(just(Token::Ctrl(':')))
+        .then(type_parser())
+        .then_ignore(just(Token::Ctrl(';')))
+        .map_with_span(|(name, type_), span| {
+            ast::TopLevelItem::GlobalVar(ast::GlobalVar { name, type_, span })
+        });
+
+    import.or(function).or(global)
 }
 
-fn block(s: &str) -> IResult<ast::Block> {
-    let (s, (statements, final_expression)) = delimited(
-        ws(char('{')),
-        pair(many0(statement), opt(expression)),
-        ws(char('}')),
-    )(s)?;
-    Ok((
-        s,
-        ast::Block {
-            statements,
-            final_expression: final_expression.map(|e| e.into()),
-        },
-    ))
-}
-
-fn statement(s: &str) -> IResult<ast::Statement> {
-    alt((
-        map(local_var, ast::Statement::LocalVariable),
-        map(terminated(expression, ws(char(';'))), |e| {
-            ast::Statement::Expression(e.into())
-        }),
-        map(
-            terminated(block_expression, not(peek(ws(char('}'))))),
-            |e| ast::Statement::Expression(e.into()),
-        ),
-        map(
-            terminated(
-                pair(
-                    mem_location,
-                    cut(ws(pair(position, preceded(char('='), expression)))),
-                ),
-                ws(char(';')),
-            ),
-            |(mem_location, (position, value))| ast::Statement::Poke {
-                position,
-                mem_location,
-                value: value.into(),
-            },
-        ),
-    ))(s)
-}
-
-fn local_var(s: &str) -> IResult<ast::LocalVariable> {
-    let (s, _) = ws(tag("let"))(s)?;
-    cut(move |s| {
-        let (s, defer) = opt(ws(tag("defer")))(s)?;
-        let (s, position) = ws(position)(s)?;
-        let (s, name) = identifier(s)?;
-        let (s, type_) = opt(preceded(ws(char(':')), type_))(s)?;
-        let (s, value) = opt(preceded(ws(char('=')), expression))(s)?;
-        let (s, _) = ws(char(';'))(s)?;
-
-        Ok((
-            s,
-            ast::LocalVariable {
-                position,
-                name: name,
-                type_,
-                value: value.map(|v| v.into()),
-                defer: defer.is_some(),
-            },
-        ))
-    })(s)
-}
-
-fn mem_location(s: &str) -> IResult<ast::MemoryLocation> {
-    let (s, position) = ws(position)(s)?;
-    let (s, left) = expression(s)?;
-    let (s, size) = map(ws(alt((char('?'), char('!')))), |op| match op {
-        '?' => ast::MemSize::Byte,
-        '!' => ast::MemSize::Word,
-        _ => unreachable!(),
-    })(s)?;
-    let (s, right) = expression(s)?;
-
-    Ok((
-        s,
-        ast::MemoryLocation {
-            position,
-            size,
-            left: left.into(),
-            right: right.into(),
-        },
-    ))
-}
-
-fn expression(s: &str) -> IResult<ast::Expr> {
-    expression_bit(s)
-}
-
-fn expression_atom(s: &str) -> IResult<ast::Expr> {
-    alt((
-        branch_if,
-        block_expression,
-        map(
-            separated_pair(pair(ws(position), identifier), ws(tag(":=")), expression),
-            |((position, name), value)| ast::Expr::LocalTee {
-                position,
-                name: name,
-                value: Box::new(value.into()),
-            },
-        ),
-        map(float, ast::Expr::F32Const),
-        map(integer, ast::Expr::I32Const),
-        map(
-            tuple((
-                terminated(ws(position), tag("select")),
-                preceded(ws(char('(')), expression),
-                preceded(ws(char(',')), expression),
-                delimited(ws(char(',')), expression, ws(char(')'))),
-            )),
-            |(position, condition, if_true, if_false)| ast::Expr::Select {
-                position,
-                condition: Box::new(condition.into()),
-                if_true: Box::new(if_true.into()),
-                if_false: Box::new(if_false.into()),
-            },
-        ),
-        map(
-            tuple((
-                ws(position),
-                identifier,
-                delimited(
-                    ws(char('(')),
-                    separated_list0(ws(char(',')), expression),
-                    ws(char(')')),
-                ),
-            )),
-            |(position, name, params)| ast::Expr::FuncCall {
-                position,
-                name,
-                params: params.into_iter().map(|p| p.into()).collect(),
-            },
-        ),
-        map(ws(pair(position, identifier)), |(position, name)| {
-            ast::Expr::Variable {
-                position,
-                name: name,
-            }
-        }),
-        delimited(ws(char('(')), cut(expression), ws(char(')'))),
-    ))(s)
-}
-
-fn branch_if(s: &str) -> IResult<ast::Expr> {
-    let (s, position) = ws(position)(s)?;
-    let (s, _) = tag("branch_if")(s)?;
-    cut(move |s| {
-        let (s, condition) = expression(s)?;
-        let (s, _) = ws(char(':'))(s)?;
-        let (s, label) = identifier(s)?;
-
-        Ok((
-            s,
-            ast::Expr::BranchIf {
-                position,
-                condition: Box::new(condition.into()),
-                label: label,
-            },
-        ))
-    })(s)
-}
-
-fn expression_cast(s: &str) -> IResult<ast::Expr> {
-    let (s, mut init) = map(expression_atom, Some)(s)?;
-    fold_many0(
-        pair(ws(terminated(position, tag("as"))), type_),
-        move || init.take().unwrap(),
-        |value, (position, type_)| ast::Expr::Cast {
-            position,
-            value: Box::new(value.into()),
-            type_,
-        },
-    )(s)
-}
-
-fn expression_product(s: &str) -> IResult<ast::Expr> {
-    let (s, mut init) = map(expression_cast, Some)(s)?;
-    fold_many0(
-        pair(
-            ws(pair(position, alt((char('*'), char('/'), char('%'))))),
-            expression_cast,
-        ),
-        move || init.take().unwrap(),
-        |left, ((position, op), right)| {
-            let op = match op {
-                '*' => ast::BinOp::Mul,
-                '/' => ast::BinOp::Div,
-                '%' => ast::BinOp::Rem,
-                _ => unreachable!(),
+fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + Clone {
+    top_level_item_parser()
+        .repeated()
+        .then_ignore(end())
+        .map(|items| {
+            let mut script = ast::Script {
+                imports: Vec::new(),
+                global_vars: Vec::new(),
+                functions: Vec::new(),
             };
-            ast::Expr::BinOp {
-                position,
-                op,
-                left: Box::new(left.into()),
-                right: Box::new(right.into()),
+            for item in items {
+                match item {
+                    ast::TopLevelItem::Import(i) => script.imports.push(i),
+                    ast::TopLevelItem::GlobalVar(v) => script.global_vars.push(v),
+                    ast::TopLevelItem::Function(f) => script.functions.push(f),
+                }
             }
-        },
-    )(s)
-}
-
-fn expression_sum(s: &str) -> IResult<ast::Expr> {
-    let (s, mut init) = map(expression_product, Some)(s)?;
-    fold_many0(
-        pair(
-            ws(pair(position, alt((char('+'), char('-'))))),
-            expression_product,
-        ),
-        move || init.take().unwrap(),
-        |left, ((position, op), right)| {
-            let op = if op == '+' {
-                ast::BinOp::Add
-            } else {
-                ast::BinOp::Sub
-            };
-            ast::Expr::BinOp {
-                position,
-                op,
-                left: Box::new(left.into()),
-                right: Box::new(right.into()),
-            }
-        },
-    )(s)
-}
-
-fn expression_cmp(s: &str) -> IResult<ast::Expr> {
-    let (s, mut init) = map(expression_sum, Some)(s)?;
-    fold_many0(
-        pair(
-            ws(pair(
-                position,
-                alt((
-                    tag("=="),
-                    tag("!="),
-                    tag("<="),
-                    tag("<"),
-                    tag(">="),
-                    tag(">"),
-                )),
-            )),
-            expression_sum,
-        ),
-        move || init.take().unwrap(),
-        |left, ((position, op), right)| {
-            let op = match op {
-                "==" => ast::BinOp::Eq,
-                "!=" => ast::BinOp::Ne,
-                "<=" => ast::BinOp::Le,
-                "<" => ast::BinOp::Lt,
-                ">=" => ast::BinOp::Ge,
-                ">" => ast::BinOp::Gt,
-                _ => unreachable!(),
-            };
-            ast::Expr::BinOp {
-                position,
-                op,
-                left: Box::new(left.into()),
-                right: Box::new(right.into()),
-            }
-        },
-    )(s)
-}
-
-fn expression_bit(s: &str) -> IResult<ast::Expr> {
-    let (s, mut init) = map(expression_cmp, Some)(s)?;
-    fold_many0(
-        pair(
-            ws(pair(position, alt((char('&'), char('|'), char('^'))))),
-            expression_cmp,
-        ),
-        move || init.take().unwrap(),
-        |left, ((position, op), right)| {
-            let op = match op {
-                '&' => ast::BinOp::And,
-                '|' => ast::BinOp::Or,
-                '^' => ast::BinOp::Xor,
-                _ => unreachable!(),
-            };
-            ast::Expr::BinOp {
-                position,
-                op,
-                left: Box::new(left.into()),
-                right: Box::new(right.into()),
-            }
-        },
-    )(s)
-}
-
-fn block_expression(s: &str) -> IResult<ast::Expr> {
-    loop_(s)
-}
-
-fn loop_(s: &str) -> IResult<ast::Expr> {
-    let (s, position) = ws(position)(s)?;
-    let (s, _) = tag("loop")(s)?;
-    cut(move |s| {
-        let (s, label) = identifier(s)?;
-        let (s, block) = block(s)?;
-
-        Ok((
-            s,
-            ast::Expr::Loop {
-                position,
-                label: label,
-                block: Box::new(block.into()),
-            },
-        ))
-    })(s)
-}
-
-fn integer(s: &str) -> IResult<i32> {
-    ws(map_res(
-        recognize(pair(opt(char('-')), digit1)),
-        |n: &str| n.parse::<i32>(),
-    ))(s)
-}
-
-fn float(s: &str) -> IResult<f32> {
-    ws(map_res(
-        recognize(tuple((opt(char('-')), digit1, char('.'), digit1))),
-        |n: &str| n.parse::<f32>(),
-    ))(s)
-}
-
-fn type_(s: &str) -> IResult<ast::Type> {
-    ws(alt((
-        value(ast::Type::I32, tag("i32")),
-        value(ast::Type::I64, tag("i64")),
-        value(ast::Type::F32, tag("f32")),
-        value(ast::Type::F64, tag("f64")),
-    )))(s)
-}
-
-fn identifier(s: &str) -> IResult<&str> {
-    ws(recognize(pair(
-        alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_")))),
-    )))(s)
-}
-
-fn position(s: &str) -> IResult<ast::Position> {
-    Ok((s, ast::Position(s.len())))
-}
-
-fn ws<'a, F: 'a, O>(inner: F) -> impl FnMut(&'a str) -> IResult<O>
-where
-    F: FnMut(&'a str) -> IResult<'a, O>,
-{
-    preceded(multispace0, inner)
-}
-
-#[cfg(test)]
-mod test {
-    use nom::combinator::all_consuming;
-
-    #[test]
-    fn identifier() {
-        all_consuming(super::identifier)("_froobaz123").unwrap();
-    }
-
-    #[test]
-    fn type_() {
-        all_consuming(super::type_)("i32").unwrap();
-        all_consuming(super::type_)("i64").unwrap();
-        all_consuming(super::type_)("f32").unwrap();
-        all_consuming(super::type_)("f64").unwrap();
-    }
-
-    #[test]
-    fn integer() {
-        all_consuming(super::integer)("123").unwrap();
-        all_consuming(super::integer)("-123").unwrap();
-    }
-
-    #[test]
-    fn local_var() {
-        all_consuming(super::local_var)("let foo: i32;").unwrap();
-        all_consuming(super::local_var)("let bar = 42;").unwrap();
-    }
-
-    #[test]
-    fn function() {
-        all_consuming(super::function)("export fn foo(a: i32, b: f32) -> i32 { let x = 42; x }")
-            .unwrap();
-    }
-
-    #[test]
-    fn loop_() {
-        all_consuming(super::loop_)("loop foo { 42 }").unwrap();
-        all_consuming(super::loop_)("loop foo { i?64 = (i % 320 + time / 10) ^ (i / 320); }")
-            .unwrap();
-    }
-
-    #[test]
-    fn block() {
-        all_consuming(super::block)("{loop frame {}}").unwrap();
-    }
-
-    #[test]
-    fn expression() {
-        all_consuming(super::expression)("foo + 2 * (bar ^ 23)").unwrap();
-        all_consuming(super::expression)("i := i + 1").unwrap();
-        all_consuming(super::expression)("(i := i + 1)").unwrap();
-    }
-
-    #[test]
-    fn poke() {
-        all_consuming(super::statement)("i?64 = (i % 320 + time / 10) ^ (i / 320);").unwrap();
-    }
-
-    #[test]
-    fn branch_if() {
-        all_consuming(super::branch_if)("branch_if (i := i + 1) < 10: foo").unwrap();
-    }
+            script
+        })
 }

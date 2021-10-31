@@ -8,22 +8,7 @@ pub fn fold_script(script: &mut ast::Script) {
 
 fn fold_block(block: &mut ast::Block) {
     for stmt in &mut block.statements {
-        match stmt {
-            ast::Statement::LocalVariable(lv) => {
-                if let Some(ref mut expr) = lv.value {
-                    fold_expr(expr);
-                }
-            }
-            ast::Statement::Expression(expr) => fold_expr(expr),
-            ast::Statement::Poke {
-                mem_location,
-                value,
-                ..
-            } => {
-                fold_mem_location(mem_location);
-                fold_expr(value);
-            }
-        }
+        fold_expr(stmt);
     }
     if let Some(ref mut expr) = block.final_expression {
         fold_expr(expr);
@@ -38,6 +23,29 @@ fn fold_mem_location(mem_location: &mut ast::MemoryLocation) {
 fn fold_expr(expr: &mut ast::Expression) {
     use ast::BinOp::*;
     match expr.expr {
+        ast::Expr::Let { ref mut value, .. } => {
+            if let Some(ref mut expr) = value {
+                fold_expr(expr);
+            }
+        }
+        ast::Expr::Poke {
+            ref mut mem_location,
+            ref mut value,
+            ..
+        } => {
+            fold_mem_location(mem_location);
+            fold_expr(value);
+        }
+        ast::Expr::UnaryOp { op, ref mut value } => {
+            fold_expr(value);
+            let result = match (op, &value.expr) {
+                (ast::UnaryOp::Negate, ast::Expr::I32Const(value)) => Some(ast::Expr::I32Const(-*value)),
+                _ => None
+            };
+            if let Some(result) = result {
+                expr.expr = result;
+            }
+        }
         ast::Expr::BinOp {
             ref mut left,
             op,
@@ -105,7 +113,7 @@ fn fold_expr(expr: &mut ast::Expression) {
         } => fold_expr(condition),
         ast::Expr::Cast { ref mut value, .. } => fold_expr(value),
         ast::Expr::FuncCall {
-            name,
+            ref name,
             ref mut params,
             ..
         } => {
@@ -114,15 +122,21 @@ fn fold_expr(expr: &mut ast::Expression) {
             }
             use ast::Expr::*;
             let params: Vec<_> = params.iter().map(|e| &e.expr).collect();
-            expr.expr = match (name, params.as_slice()) {
+            expr.expr = match (name.as_str(), params.as_slice()) {
                 ("sqrt", [F32Const(v)]) if *v >= 0.0 => F32Const(v.sqrt()),
                 _ => return,
             };
         }
-        ast::Expr::Select { ref mut condition, ref mut if_true, ref mut if_false, .. } => {
+        ast::Expr::Select {
+            ref mut condition,
+            ref mut if_true,
+            ref mut if_false,
+            ..
+        } => {
             fold_expr(condition);
             fold_expr(if_true);
             fold_expr(if_false);
         }
+        ast::Expr::Error => unreachable!()
     }
 }
