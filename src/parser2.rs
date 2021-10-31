@@ -17,6 +17,7 @@ enum Token {
     BranchIf,
     Defer,
     As,
+    Select,
     Ident(String),
     Str(String),
     Int(i32),
@@ -39,6 +40,7 @@ impl fmt::Display for Token {
             Token::BranchIf => write!(f, "branch_if"),
             Token::Defer => write!(f, "defer"),
             Token::As => write!(f, "as"),
+            Token::Select => write!(f, "select"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
@@ -189,6 +191,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "branch_if" => Token::BranchIf,
         "defer" => Token::Defer,
         "as" => Token::As,
+        "select" => Token::Select,
         _ => Token::Ident(ident),
     });
 
@@ -326,6 +329,10 @@ mod ast {
             condition: Box<Expression>,
             label: String,
         },
+        UnaryOp {
+            op: UnaryOp,
+            value: Box<Expression>,
+        },
         BinOp {
             op: BinOp,
             left: Box<Expression>,
@@ -359,6 +366,11 @@ mod ast {
                 span: span,
             }
         }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum UnaryOp {
+        Negate,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -481,13 +493,41 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     value: Box::new(value),
                 });
 
+            let select = just(Token::Select)
+                .ignore_then(
+                    expression
+                        .clone()
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(expression.clone())
+                        .then_ignore(just(Token::Ctrl(',')))
+                        .then(expression.clone())
+                        .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                )
+                .map(|((condition, if_true), if_false)| ast::Expr::Select {
+                    condition: Box::new(condition),
+                    if_true: Box::new(if_true),
+                    if_false: Box::new(if_false),
+                });
+
+            let function_call = ident
+                .clone()
+                .then(
+                    expression
+                        .clone()
+                        .separated_by(just(Token::Ctrl(',')))
+                        .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                )
+                .map(|(name, params)| ast::Expr::FuncCall { name, params });
+
             let atom = val
                 .or(tee)
+                .or(function_call)
                 .or(variable)
                 .or(local_tee)
                 .or(loop_expr)
                 .or(branch_if)
                 .or(let_)
+                .or(select)
                 .map_with_span(|expr, span| expr.with_span(span))
                 .or(expression
                     .clone()
@@ -499,7 +539,23 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     |span| ast::Expr::Error.with_span(span),
                 ));
 
-            let op_cast = atom
+            let unary_op = just(Token::Op("-".to_string()))
+                .to(ast::UnaryOp::Negate)
+                .map_with_span(|op, span| (op, span))
+                .repeated()
+                .then(atom)
+                .map(|(ops, value)| {
+                    ops.into_iter().rev().fold(value, |acc, (op, span)| {
+                        let span = span.start..acc.span.end;
+                        ast::Expr::UnaryOp {
+                            op,
+                            value: Box::new(acc),
+                        }
+                        .with_span(span)
+                    })
+                });
+
+            let op_cast = unary_op
                 .clone()
                 .then(
                     just(Token::As)
@@ -709,7 +765,7 @@ fn top_level_item_parser() -> impl Parser<Token, ast::TopLevelItem, Error = Simp
     let function = just(Token::Export)
         .or_not()
         .then_ignore(just(Token::Fn))
-        .then(identifier)
+        .then(identifier.clone())
         .then(
             parameter
                 .separated_by(just(Token::Ctrl(',')))
@@ -732,7 +788,16 @@ fn top_level_item_parser() -> impl Parser<Token, ast::TopLevelItem, Error = Simp
             })
         });
 
-    import.or(function)
+    let global = just(Token::Global)
+        .ignore_then(identifier.clone())
+        .then_ignore(just(Token::Ctrl(':')))
+        .then(type_parser())
+        .then_ignore(just(Token::Ctrl(';')))
+        .map_with_span(|(name, type_), span| {
+            ast::TopLevelItem::GlobalVar(ast::GlobalVar { name, type_, span })
+        });
+
+    import.or(function).or(global)
 }
 
 fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + Clone {
