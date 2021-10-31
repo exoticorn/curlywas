@@ -16,6 +16,7 @@ enum Token {
     Loop,
     BranchIf,
     Defer,
+    As,
     Ident(String),
     Str(String),
     Int(i32),
@@ -37,6 +38,7 @@ impl fmt::Display for Token {
             Token::Loop => write!(f, "loop"),
             Token::BranchIf => write!(f, "branch_if"),
             Token::Defer => write!(f, "defer"),
+            Token::As => write!(f, "as"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
@@ -186,6 +188,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "loop" => Token::Loop,
         "branch_if" => Token::BranchIf,
         "defer" => Token::Defer,
+        "as" => Token::As,
         _ => Token::Ident(ident),
     });
 
@@ -496,31 +499,47 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     |span| ast::Expr::Error.with_span(span),
                 ));
 
+            let op_cast = atom
+                .clone()
+                .then(
+                    just(Token::As)
+                        .ignore_then(type_parser())
+                        .map_with_span(|type_, span| (type_, span))
+                        .repeated(),
+                )
+                .foldl(|value, (type_, span)| {
+                    ast::Expr::Cast {
+                        value: Box::new(value),
+                        type_,
+                    }
+                    .with_span(span)
+                });
+
             let mem_size = just(Token::Ctrl('?'))
                 .to(ast::MemSize::Byte)
                 .or(just(Token::Ctrl('!')).to(ast::MemSize::Word));
 
-            let memory_op = atom
+            let memory_op = op_cast
                 .clone()
                 .then(
                     mem_size
-                        .then(atom.clone())
+                        .then(op_cast.clone())
                         .then_ignore(just(Token::Op("=".to_string())))
                         .then(expression.clone())
                         .repeated(),
                 )
-                .foldl(|left, ((size, right), value)| ast::Expression {
-                    span: left.span.start..value.span.end,
-                    expr: ast::Expr::Poke {
+                .foldl(|left, ((size, right), value)| {
+                    let span = left.span.start..value.span.end;
+                    ast::Expr::Poke {
                         mem_location: ast::MemoryLocation {
-                            span: left.span.start..right.span.end,
+                            span: span.clone(),
                             left: Box::new(left),
                             size,
                             right: Box::new(right),
                         },
                         value: Box::new(value),
-                    },
-                    type_: None,
+                    }
+                    .with_span(span)
                 });
 
             let op_product = memory_op
@@ -533,14 +552,14 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         .then(memory_op.clone())
                         .repeated(),
                 )
-                .foldl(|left, (op, right)| ast::Expression {
-                    span: left.span.start..right.span.end,
-                    expr: ast::Expr::BinOp {
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
                         right: Box::new(right),
-                    },
-                    type_: None,
+                    }
+                    .with_span(span)
                 });
 
             let op_sum = op_product
@@ -552,14 +571,14 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         .then(op_product.clone())
                         .repeated(),
                 )
-                .foldl(|left, (op, right)| ast::Expression {
-                    span: left.span.start..right.span.end,
-                    expr: ast::Expr::BinOp {
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
                         right: Box::new(right),
-                    },
-                    type_: None,
+                    }
+                    .with_span(span)
                 });
 
             let op_cmp = op_sum
@@ -575,14 +594,14 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         .then(op_sum.clone())
                         .repeated(),
                 )
-                .foldl(|left, (op, right)| ast::Expression {
-                    span: left.span.start..right.span.end,
-                    expr: ast::Expr::BinOp {
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
                         right: Box::new(right),
-                    },
-                    type_: None,
+                    }
+                    .with_span(span)
                 });
 
             let op_bit = op_cmp
@@ -595,14 +614,14 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                         .then(op_cmp.clone())
                         .repeated(),
                 )
-                .foldl(|left, (op, right)| ast::Expression {
-                    span: left.span.start..right.span.end,
-                    expr: ast::Expr::BinOp {
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
                         right: Box::new(right),
-                    },
-                    type_: None,
+                    }
+                    .with_span(span)
                 });
 
             op_bit
