@@ -469,7 +469,17 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     defer: defer.is_some(),
                 });
 
+            let tee = ident
+                .clone()
+                .then_ignore(just(Token::Op(":=".to_string())))
+                .then(expression.clone())
+                .map(|(name, value)| ast::Expr::LocalTee {
+                    name,
+                    value: Box::new(value),
+                });
+
             let atom = val
+                .or(tee)
                 .or(variable)
                 .or(local_tee)
                 .or(loop_expr)
@@ -513,7 +523,89 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     type_: None,
                 });
 
-            memory_op
+            let op_product = memory_op
+                .clone()
+                .then(
+                    just(Token::Op("*".to_string()))
+                        .to(ast::BinOp::Mul)
+                        .or(just(Token::Op("/".to_string())).to(ast::BinOp::Div))
+                        .or(just(Token::Op("%".to_string())).to(ast::BinOp::Rem))
+                        .then(memory_op.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| ast::Expression {
+                    span: left.span.start..right.span.end,
+                    expr: ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    type_: None,
+                });
+
+            let op_sum = op_product
+                .clone()
+                .then(
+                    just(Token::Op("+".to_string()))
+                        .to(ast::BinOp::Add)
+                        .or(just(Token::Op("-".to_string())).to(ast::BinOp::Sub))
+                        .then(op_product.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| ast::Expression {
+                    span: left.span.start..right.span.end,
+                    expr: ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    type_: None,
+                });
+
+            let op_cmp = op_sum
+                .clone()
+                .then(
+                    just(Token::Op("==".to_string()))
+                        .to(ast::BinOp::Eq)
+                        .or(just(Token::Op("!=".to_string())).to(ast::BinOp::Ne))
+                        .or(just(Token::Op("<".to_string())).to(ast::BinOp::Lt))
+                        .or(just(Token::Op("<=".to_string())).to(ast::BinOp::Le))
+                        .or(just(Token::Op(">".to_string())).to(ast::BinOp::Gt))
+                        .or(just(Token::Op(">=".to_string())).to(ast::BinOp::Ge))
+                        .then(op_sum.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| ast::Expression {
+                    span: left.span.start..right.span.end,
+                    expr: ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    type_: None,
+                });
+
+            let op_bit = op_cmp
+                .clone()
+                .then(
+                    just(Token::Op("&".to_string()))
+                        .to(ast::BinOp::And)
+                        .or(just(Token::Op("|".to_string())).to(ast::BinOp::Or))
+                        .or(just(Token::Op("^".to_string())).to(ast::BinOp::Xor))
+                        .then(op_cmp.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| ast::Expression {
+                    span: left.span.start..right.span.end,
+                    expr: ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    type_: None,
+                });
+
+            op_bit
         });
 
         expression
