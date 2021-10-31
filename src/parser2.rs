@@ -15,6 +15,7 @@ enum Token {
     Mut,
     Loop,
     BranchIf,
+    Defer,
     Ident(String),
     Str(String),
     Int(i32),
@@ -35,6 +36,7 @@ impl fmt::Display for Token {
             Token::Mut => write!(f, "mut"),
             Token::Loop => write!(f, "loop"),
             Token::BranchIf => write!(f, "branch_if"),
+            Token::Defer => write!(f, "defer"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
@@ -183,6 +185,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "mut" => Token::Mut,
         "loop" => Token::Loop,
         "branch_if" => Token::BranchIf,
+        "defer" => Token::Defer,
         _ => Token::Ident(ident),
     });
 
@@ -450,11 +453,28 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     label,
                 });
 
+            let let_ = just(Token::Let)
+                .ignore_then(just(Token::Defer).or_not())
+                .then(ident.clone())
+                .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
+                .then(
+                    just(Token::Op("=".to_string()))
+                        .ignore_then(expression.clone())
+                        .or_not(),
+                )
+                .map(|(((defer, name), type_), value)| ast::Expr::Let {
+                    name,
+                    type_,
+                    value: value.map(Box::new),
+                    defer: defer.is_some(),
+                });
+
             let atom = val
                 .or(variable)
                 .or(local_tee)
                 .or(loop_expr)
                 .or(branch_if)
+                .or(let_)
                 .map_with_span(|expr, span| expr.with_span(span))
                 .or(expression
                     .clone()
@@ -466,7 +486,34 @@ fn block_parser() -> impl Parser<Token, ast::Block, Error = Simple<Token>> + Clo
                     |span| ast::Expr::Error.with_span(span),
                 ));
 
-            atom
+            let mem_size = just(Token::Ctrl('?'))
+                .to(ast::MemSize::Byte)
+                .or(just(Token::Ctrl('!')).to(ast::MemSize::Word));
+
+            let memory_op = atom
+                .clone()
+                .then(
+                    mem_size
+                        .then(atom.clone())
+                        .then_ignore(just(Token::Op("=".to_string())))
+                        .then(expression.clone())
+                        .repeated(),
+                )
+                .foldl(|left, ((size, right), value)| ast::Expression {
+                    span: left.span.start..value.span.end,
+                    expr: ast::Expr::Poke {
+                        mem_location: ast::MemoryLocation {
+                            span: left.span.start..right.span.end,
+                            left: Box::new(left),
+                            size,
+                            right: Box::new(right),
+                        },
+                        value: Box::new(value),
+                    },
+                    type_: None,
+                });
+
+            memory_op
         });
 
         expression
@@ -522,7 +569,7 @@ fn top_level_item_parser() -> impl Parser<Token, ast::TopLevelItem, Error = Simp
 
     let import_global = just(Token::Global)
         .ignore_then(just(Token::Mut).or_not())
-        .then(identifier)
+        .then(identifier.clone())
         .then_ignore(just(Token::Ctrl(':')))
         .then(type_parser())
         .map(|((mut_opt, name), type_)| ast::ImportType::Variable {
@@ -543,7 +590,38 @@ fn top_level_item_parser() -> impl Parser<Token, ast::TopLevelItem, Error = Simp
             })
         });
 
-    import
+    let parameter = identifier
+        .clone()
+        .then_ignore(just(Token::Ctrl(':')))
+        .then(type_parser());
+
+    let function = just(Token::Export)
+        .or_not()
+        .then_ignore(just(Token::Fn))
+        .then(identifier)
+        .then(
+            parameter
+                .separated_by(just(Token::Ctrl(',')))
+                .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+        )
+        .then(
+            just(Token::Op("->".to_string()))
+                .ignore_then(type_parser())
+                .or_not(),
+        )
+        .then(block_parser().delimited_by(Token::Ctrl('{'), Token::Ctrl('}')))
+        .map_with_span(|((((export, name), params), type_), body), span| {
+            ast::TopLevelItem::Function(ast::Function {
+                span,
+                params,
+                export: export.is_some(),
+                name,
+                type_,
+                body,
+            })
+        });
+
+    import.or(function)
 }
 
 fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + Clone {
