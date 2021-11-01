@@ -85,7 +85,7 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
             }
         }
 
-        tc_block(&mut context, &mut f.body)?;
+        tc_expression(&mut context, &mut f.body)?;
     }
 
     result
@@ -96,19 +96,6 @@ struct Context<'a> {
     global_vars: Vars,
     local_vars: Vars,
     block_stack: Vec<String>,
-}
-
-fn tc_block(context: &mut Context, block: &mut ast::Block) -> Result<()> {
-    let mut result = Ok(());
-    for stmt in &mut block.statements {
-        if tc_expression(context, stmt).is_err() {
-            result = Err(());
-        }
-    }
-    if let Some(ref mut expr) = block.final_expression {
-        tc_expression(context, expr)?;
-    }
-    result
 }
 
 fn report_duplicate_definition(
@@ -195,6 +182,20 @@ fn unknown_variable(span: &Span, source: &str) -> Result<()> {
 
 fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()> {
     expr.type_ = match expr.expr {
+        ast::Expr::Block {
+            ref mut statements,
+            ref mut final_expression
+        } => {
+            for stmt in statements {
+                tc_expression(context, stmt)?;
+            }
+            if let Some(final_expression) = final_expression {
+                tc_expression(context, final_expression)?;
+                final_expression.type_
+            } else {
+                None
+            }
+        }
         ast::Expr::Let {
             ref mut value,
             ref mut type_,
@@ -253,6 +254,10 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 return Err(());
             }
             None
+        }
+        ast::Expr::Peek(ref mut mem_location) => {
+            tc_mem_location(context, mem_location)?;
+            Some(I32)
         }
         ast::Expr::Poke {
             ref mut mem_location,
@@ -346,9 +351,9 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             ref mut block,
         } => {
             context.block_stack.push(label.clone());
-            tc_block(context, block)?;
+            tc_expression(context, block)?;
             context.block_stack.pop();
-            block.final_expression.as_ref().and_then(|e| e.type_)
+            block.type_
         }
         ast::Expr::BranchIf {
             ref mut condition,
@@ -473,6 +478,25 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 return expected_type(&if_true.span, context.source);
             }
             if_true.type_
+        }
+        ast::Expr::If {
+            ref mut condition,
+            ref mut if_true,
+            ref mut if_false
+        } => {
+            tc_expression(context, condition)?;
+            tc_expression(context, if_true)?;
+            if let Some(ref mut if_false) = if_false {
+                tc_expression(context, if_false)?;
+                if if_true.type_ != if_false.type_ {
+                    // TODO: report type mismatch?
+                    None
+                } else {
+                    if_true.type_
+                }
+            } else {
+                None
+            }
         }
         ast::Expr::Error => unreachable!(),
     };

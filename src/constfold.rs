@@ -2,16 +2,7 @@ use crate::ast;
 
 pub fn fold_script(script: &mut ast::Script) {
     for func in &mut script.functions {
-        fold_block(&mut func.body);
-    }
-}
-
-fn fold_block(block: &mut ast::Block) {
-    for stmt in &mut block.statements {
-        fold_expr(stmt);
-    }
-    if let Some(ref mut expr) = block.final_expression {
-        fold_expr(expr);
+        fold_expr(&mut func.body);
     }
 }
 
@@ -23,6 +14,14 @@ fn fold_mem_location(mem_location: &mut ast::MemoryLocation) {
 fn fold_expr(expr: &mut ast::Expression) {
     use ast::BinOp::*;
     match expr.expr {
+        ast::Expr::Block { ref mut statements, ref mut final_expression} => {
+            for stmt in statements {
+                fold_expr(stmt);
+            }
+            if let Some(ref mut expr) = final_expression {
+                fold_expr(expr);
+            }        
+        }
         ast::Expr::Let { ref mut value, .. } => {
             if let Some(ref mut expr) = value {
                 fold_expr(expr);
@@ -36,6 +35,7 @@ fn fold_expr(expr: &mut ast::Expression) {
             fold_mem_location(mem_location);
             fold_expr(value);
         }
+        ast::Expr::Peek(ref mut mem_location) => fold_mem_location(mem_location),
         ast::Expr::UnaryOp { op, ref mut value } => {
             fold_expr(value);
             let result = match (op, &value.expr) {
@@ -107,7 +107,7 @@ fn fold_expr(expr: &mut ast::Expression) {
         }
         ast::Expr::I32Const(_) | ast::Expr::F32Const(_) | ast::Expr::Variable { .. } => (),
         ast::Expr::LocalTee { ref mut value, .. } => fold_expr(value),
-        ast::Expr::Loop { ref mut block, .. } => fold_block(block),
+        ast::Expr::Loop { ref mut block, .. } => fold_expr(block),
         ast::Expr::BranchIf {
             ref mut condition, ..
         } => fold_expr(condition),
@@ -136,6 +136,15 @@ fn fold_expr(expr: &mut ast::Expression) {
             fold_expr(condition);
             fold_expr(if_true);
             fold_expr(if_false);
+        }
+        ast::Expr::If {
+            ref mut condition, ref mut if_true, ref mut if_false
+        } => {
+            fold_expr(condition);
+            fold_expr(if_true);
+            if let Some(ref mut if_false) = if_false {
+                fold_expr(if_false);
+            }
         }
         ast::Expr::Error => unreachable!()
     }

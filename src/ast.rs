@@ -46,19 +46,7 @@ pub struct Function {
     pub name: String,
     pub params: Vec<(String, Type)>,
     pub type_: Option<Type>,
-    pub body: Block,
-}
-
-#[derive(Debug)]
-pub struct Block {
-    pub statements: Vec<Expression>,
-    pub final_expression: Option<Box<Expression>>,
-}
-
-impl Block {
-    pub fn type_(&self) -> Option<Type> {
-        self.final_expression.as_ref().and_then(|e| e.type_)
-    }
+    pub body: Expression,
 }
 
 #[derive(Debug)]
@@ -78,6 +66,10 @@ pub struct Expression {
 
 #[derive(Debug)]
 pub enum Expr {
+    Block {
+        statements: Vec<Expression>,
+        final_expression: Option<Box<Expression>>,
+    },
     I32Const(i32),
     F32Const(f32),
     Variable(String),
@@ -91,9 +83,10 @@ pub enum Expr {
         mem_location: MemoryLocation,
         value: Box<Expression>,
     },
+    Peek(MemoryLocation),
     Loop {
         label: String,
-        block: Box<Block>,
+        block: Box<Expression>,
     },
     BranchIf {
         condition: Box<Expression>,
@@ -124,6 +117,11 @@ pub enum Expr {
         condition: Box<Expression>,
         if_true: Box<Expression>,
         if_false: Box<Expression>,
+    },
+    If {
+        condition: Box<Expression>,
+        if_true: Box<Expression>,
+        if_false: Option<Box<Expression>>
     },
     Error,
 }
