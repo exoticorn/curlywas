@@ -475,6 +475,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             emit_expression(ctx, condition);
             ctx.function
                 .instruction(&Instruction::If(map_block_type(expr.type_)));
+            ctx.labels.push(String::new());
             emit_expression(ctx, if_true);
             if if_true.type_.is_some() && if_true.type_ != expr.type_ {
                 ctx.function.instruction(&Instruction::Drop);
@@ -486,6 +487,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                     ctx.function.instruction(&Instruction::Drop);
                 }
             }
+            ctx.labels.pop();
             ctx.function.instruction(&Instruction::End);
         }
         ast::Expr::Return { value } => {
