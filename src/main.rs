@@ -26,13 +26,13 @@ fn main() -> Result<()> {
 
     constfold::fold_script(&mut script);
     if let Err(_) = typecheck::tc_script(&mut script, &input) {
-        bail!("Parse failed");
+        bail!("Type check failed");
     }
     let wasm = emit::emit(&script);
 
     wasmparser::validate(&wasm)?;
 
-    filename.set_extension("uw8");
+    filename.set_extension("wasm");
     File::create(filename)?.write_all(&wasm)?;
 
     println!("Size of code section: {} bytes", code_section_size(&wasm)?);

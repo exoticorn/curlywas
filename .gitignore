@@ -1,2 +1,4 @@
 /target
-*.uw8
+.cargo/
+*.wasm
+*.lua*

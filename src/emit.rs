@@ -68,6 +68,11 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         let mut exports = ExportSection::new();
         let mut code = CodeSection::new();
 
+        let mut function_map = HashMap::new();
+        for func in script.functions.iter() {
+            function_map.insert(func.name.clone(), function_map.len() as u32);
+        }
+
         for (index, func) in script.functions.iter().enumerate() {
             let type_ = *function_types.get(&function_type_key(func)).unwrap();
             functions.function(type_ as u32);
@@ -75,7 +80,7 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
                 exports.export(&func.name, Export::Function(index as u32));
             }
 
-            code.function(&emit_function(func, &globals));
+            code.function(&emit_function(func, &globals, &function_map));
         }
 
         module.section(&functions);
@@ -109,28 +114,38 @@ fn function_type_key(func: &ast::Function) -> FunctionTypeKey {
 struct FunctionContext<'a> {
     function: &'a mut Function,
     globals: &'a HashMap<&'a str, u32>,
+    functions: &'a HashMap<String, u32>,
     locals: &'a HashMap<String, u32>,
     labels: Vec<String>,
     deferred_inits: HashMap<&'a str, &'a ast::Expression>,
 }
 
-fn emit_function(func: &ast::Function, globals: &HashMap<&str, u32>) -> Function {
+fn emit_function(
+    func: &ast::Function,
+    globals: &HashMap<&str, u32>,
+    functions: &HashMap<String, u32>,
+) -> Function {
     let mut locals = Vec::new();
     collect_locals_expr(&func.body, &mut locals);
     locals.sort_by_key(|(_, t)| *t);
 
     let mut function = Function::new_with_locals_types(locals.iter().map(|(_, t)| map_type(*t)));
 
-    let locals: HashMap<String, u32> = locals
-        .into_iter()
-        .enumerate()
-        .map(|(index, (name, _))| (name, index as u32))
-        .collect();
+    let mut local_map: HashMap<String, u32> = HashMap::new();
+
+    for (ref name, _) in func.params.iter() {
+        local_map.insert(name.clone(), local_map.len() as u32);
+    }
+
+    for (name, _) in locals {
+        local_map.insert(name, local_map.len() as u32);
+    }
 
     let mut context = FunctionContext {
         function: &mut function,
         globals,
-        locals: &locals,
+        functions,
+        locals: &local_map,
         labels: vec![],
         deferred_inits: HashMap::new(),
     };
@@ -180,7 +195,9 @@ fn collect_locals_expr<'a>(expr: &ast::Expression, locals: &mut Vec<(String, ast
             collect_locals_expr(left, locals);
             collect_locals_expr(right, locals);
         }
+        ast::Expr::Branch(_) => (),
         ast::Expr::BranchIf { condition, .. } => collect_locals_expr(condition, locals),
+        ast::Expr::Assign { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::LocalTee { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::Loop { block, .. } => collect_locals_expr(block, locals),
         ast::Expr::Cast { value, .. } => collect_locals_expr(value, locals),
@@ -210,6 +227,8 @@ fn collect_locals_expr<'a>(expr: &ast::Expression, locals: &mut Vec<(String, ast
                 collect_locals_expr(if_false, locals);
             }
         }
+        ast::Expr::Return { value: Some(value) } => collect_locals_expr(value, locals),
+        ast::Expr::Return { value: None } => (),
         ast::Expr::Error => unreachable!(),
     }
 }
@@ -318,12 +337,15 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 (I32, Le) => Instruction::I32LeS,
                 (I32, Gt) => Instruction::I32GtS,
                 (I32, Ge) => Instruction::I32GeS,
+                (I32, Lsl) => Instruction::I32Shl,
+                (I32, Lsr) => Instruction::I32ShrU,
+                (I32, Asr) => Instruction::I32ShrS,
 
                 (F32, Add) => Instruction::F32Add,
                 (F32, Sub) => Instruction::F32Sub,
                 (F32, Mul) => Instruction::F32Mul,
                 (F32, Div) => Instruction::F32Div,
-                (F32, Rem | And | Or | Xor) => unreachable!(),
+                (F32, Rem | And | Or | Xor | Lsl | Lsr | Asr) => unreachable!(),
                 (F32, Eq) => Instruction::F32Eq,
                 (F32, Ne) => Instruction::F32Neq,
                 (F32, Lt) => Instruction::F32Lt,
@@ -334,6 +356,17 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 (I64, _) => todo!(),
                 (F64, _) => todo!(),
             });
+        }
+        ast::Expr::Branch(label) => {
+            let depth = ctx
+                .labels
+                .iter()
+                .rev()
+                .enumerate()
+                .find(|(_, l)| *l == label)
+                .unwrap()
+                .0;
+            ctx.function.instruction(&Instruction::Br(depth as u32));
         }
         ast::Expr::BranchIf {
             condition, label, ..
@@ -354,6 +387,18 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         }
         ast::Expr::F32Const(v) => {
             ctx.function.instruction(&Instruction::F32Const(*v));
+        }
+        ast::Expr::Assign { name, value, .. } => {
+            emit_expression(ctx, value);
+            if let Some(local_index) = ctx.locals.get(name) {
+                ctx.function
+                    .instruction(&Instruction::LocalSet(*local_index));
+            } else if let Some(global_index) = ctx.globals.get(name.as_str()) {
+                ctx.function
+                    .instruction(&Instruction::GlobalSet(*global_index));
+            } else {
+                unreachable!();
+            }
         }
         ast::Expr::LocalTee { name, value, .. } => {
             emit_expression(ctx, value);
@@ -379,6 +424,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             } else if let Some(index) = ctx.globals.get(name.as_str()) {
                 ctx.function.instruction(&Instruction::GlobalGet(*index));
             } else {
+                dbg!(name);
                 unreachable!()
             }
         }
@@ -396,13 +442,19 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             }
         }
         ast::Expr::FuncCall { name, params, .. } => {
-            let mut types = vec![];
             for param in params {
-                types.push(param.type_.unwrap());
                 emit_expression(ctx, param);
             }
-            ctx.function
-                .instruction(&builtin_function(name, &types).unwrap());
+            if let Some(index) = ctx.functions.get(name) {
+                ctx.function.instruction(&Instruction::Call(*index));
+            } else {
+                let mut types = vec![];
+                for param in params {
+                    types.push(param.type_.unwrap());
+                }
+                ctx.function
+                    .instruction(&builtin_function(name, &types).unwrap());
+            }
         }
         ast::Expr::Select {
             condition,
@@ -433,6 +485,13 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 if if_false.type_.is_some() && if_false.type_ != expr.type_ {
                     ctx.function.instruction(&Instruction::Drop);
                 }
+            }
+            ctx.function.instruction(&Instruction::End);
+        }
+        ast::Expr::Return { value } => {
+            if let Some(value) = value {
+                emit_expression(ctx, value);
+                ctx.function.instruction(&Instruction::Return);
             }
         }
         ast::Expr::Error => unreachable!(),

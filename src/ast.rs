@@ -88,6 +88,7 @@ pub enum Expr {
         label: String,
         block: Box<Expression>,
     },
+    Branch(String),
     BranchIf {
         condition: Box<Expression>,
         label: String,
@@ -100,6 +101,10 @@ pub enum Expr {
         op: BinOp,
         left: Box<Expression>,
         right: Box<Expression>,
+    },
+    Assign {
+        name: String,
+        value: Box<Expression>,
     },
     LocalTee {
         name: String,
@@ -122,6 +127,9 @@ pub enum Expr {
         condition: Box<Expression>,
         if_true: Box<Expression>,
         if_false: Option<Box<Expression>>
+    },
+    Return {
+        value: Option<Box<Expression>>
     },
     Error,
 }
@@ -157,6 +165,9 @@ pub enum BinOp {
     Ge,
     Lt,
     Le,
+    Lsl,
+    Lsr,
+    Asr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

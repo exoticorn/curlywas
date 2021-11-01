@@ -17,8 +17,10 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
     let mut context = Context {
         source,
         global_vars: HashMap::new(),
+        functions: HashMap::new(),
         local_vars: HashMap::new(),
         block_stack: Vec::new(),
+        return_type: None,
     };
 
     let mut result = Ok(());
@@ -64,6 +66,23 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
         }
     }
 
+    for f in &script.functions {
+        let params = f.params.iter().map(|(_, t)| *t).collect();
+        if let Some(fnc) = context.functions.get(&f.name) {
+            result =
+                report_duplicate_definition("Function already defined", &f.span, &fnc.span, source);
+        } else {
+            context.functions.insert(
+                f.name.clone(),
+                FunctionType {
+                    params,
+                    type_: f.type_,
+                    span: f.span.clone(),
+                },
+            );
+        }
+    }
+
     for f in &mut script.functions {
         context.local_vars.clear();
         for (name, type_) in &f.params {
@@ -84,18 +103,31 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
                 );
             }
         }
+        context.return_type = f.type_;
 
         tc_expression(&mut context, &mut f.body)?;
+
+        if f.body.type_ != f.type_ {
+            result = type_mismatch(f.type_, &f.span, f.body.type_, &f.body.span, source);
+        }
     }
 
     result
 }
 
+struct FunctionType {
+    span: Span,
+    params: Vec<ast::Type>,
+    type_: Option<ast::Type>,
+}
+
 struct Context<'a> {
     source: &'a str,
     global_vars: Vars,
+    functions: HashMap<String, FunctionType>,
     local_vars: Vars,
     block_stack: Vec<String>,
+    return_type: Option<ast::Type>,
 }
 
 fn report_duplicate_definition(
@@ -123,7 +155,7 @@ fn report_duplicate_definition(
 }
 
 fn type_mismatch(
-    type1: ast::Type,
+    type1: Option<ast::Type>,
     span1: &Span,
     type2: Option<ast::Type>,
     span2: &Span,
@@ -133,7 +165,12 @@ fn type_mismatch(
         .with_message("Type mismatch")
         .with_label(
             Label::new(span1.clone())
-                .with_message(format!("Expected type {:?}...", type1))
+                .with_message(format!(
+                    "Expected type {:?}...",
+                    type1
+                        .map(|t| format!("{:?}", t))
+                        .unwrap_or("void".to_string())
+                ))
                 .with_color(Color::Yellow),
         )
         .with_label(
@@ -180,11 +217,25 @@ fn unknown_variable(span: &Span, source: &str) -> Result<()> {
     Err(())
 }
 
+fn missing_label(span: &Span, source: &str) -> Result<()> {
+    Report::build(ReportKind::Error, (), span.start)
+        .with_message("Label not found")
+        .with_label(
+            Label::new(span.clone())
+                .with_message("Label not found")
+                .with_color(Color::Red),
+        )
+        .finish()
+        .eprint(Source::from(source))
+        .unwrap();
+    return Err(());
+}
+
 fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()> {
     expr.type_ = match expr.expr {
         ast::Expr::Block {
             ref mut statements,
-            ref mut final_expression
+            ref mut final_expression,
         } => {
             for stmt in statements {
                 tc_expression(context, stmt)?;
@@ -207,7 +258,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 if let Some(type_) = type_ {
                     if Some(*type_) != value.type_ {
                         return type_mismatch(
-                            *type_,
+                            Some(*type_),
                             &expr.span,
                             value.type_,
                             &value.span,
@@ -266,7 +317,13 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             tc_mem_location(context, mem_location)?;
             tc_expression(context, value)?;
             if value.type_ != Some(I32) {
-                return type_mismatch(I32, &expr.span, value.type_, &value.span, context.source);
+                return type_mismatch(
+                    Some(I32),
+                    &expr.span,
+                    value.type_,
+                    &value.span,
+                    context.source,
+                );
             }
             None
         }
@@ -289,7 +346,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             if let Some(type_) = left.type_ {
                 if left.type_ != right.type_ {
                     return type_mismatch(
-                        type_,
+                        Some(type_),
                         &left.span,
                         right.type_,
                         &right.span,
@@ -302,10 +359,10 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             use ast::BinOp::*;
             match op {
                 Add | Sub | Mul | Div => left.type_,
-                Rem | And | Or | Xor => {
+                Rem | And | Or | Xor | Lsl | Lsr | Asr => {
                     if left.type_ != Some(I32) {
                         return type_mismatch(
-                            I32,
+                            Some(I32),
                             &left.span,
                             left.type_,
                             &left.span,
@@ -329,6 +386,32 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 return unknown_variable(&expr.span, context.source);
             }
         }
+        ast::Expr::Assign {
+            ref name,
+            ref mut value,
+        } => {
+            tc_expression(context, value)?;
+            if let Some(&Var {
+                type_, ref span, ..
+            }) = context
+                .local_vars
+                .get(name)
+                .or_else(|| context.global_vars.get(name))
+            {
+                if value.type_ != Some(type_) {
+                    return type_mismatch(
+                        Some(type_),
+                        span,
+                        value.type_,
+                        &value.span,
+                        context.source,
+                    );
+                }
+            } else {
+                return unknown_variable(&expr.span, context.source);
+            }
+            None
+        }
         ast::Expr::LocalTee {
             ref name,
             ref mut value,
@@ -339,7 +422,13 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             }) = context.local_vars.get(name)
             {
                 if value.type_ != Some(type_) {
-                    return type_mismatch(type_, span, value.type_, &value.span, context.source);
+                    return type_mismatch(
+                        Some(type_),
+                        span,
+                        value.type_,
+                        &value.span,
+                        context.source,
+                    );
                 }
                 Some(type_)
             } else {
@@ -355,6 +444,12 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             context.block_stack.pop();
             block.type_
         }
+        ast::Expr::Branch(ref label) => {
+            if !context.block_stack.contains(label) {
+                return missing_label(&expr.span, context.source);
+            }
+            None
+        }
         ast::Expr::BranchIf {
             ref mut condition,
             ref label,
@@ -362,7 +457,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             tc_expression(context, condition)?;
             if condition.type_ != Some(I32) {
                 return type_mismatch(
-                    I32,
+                    Some(I32),
                     &expr.span,
                     condition.type_,
                     &condition.span,
@@ -370,17 +465,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 );
             }
             if !context.block_stack.contains(label) {
-                Report::build(ReportKind::Error, (), expr.span.start)
-                    .with_message("Label not found")
-                    .with_label(
-                        Label::new(expr.span.clone())
-                            .with_message("Label not found")
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(Source::from(context.source))
-                    .unwrap();
-                return Err(());
+                return missing_label(&expr.span, context.source);
             }
             None
         }
@@ -398,7 +483,15 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             ref name,
             ref mut params,
         } => {
-            if let Some((ptypes, rtype)) = builtin_function_types(name) {
+            for param in params.iter_mut() {
+                tc_expression(context, param)?;
+            }
+            if let Some((ptypes, rtype)) = context
+                .functions
+                .get(name)
+                .map(|fnc| (fnc.params.as_slice(), fnc.type_))
+                .or_else(|| builtin_function_types(name))
+            {
                 if params.len() != ptypes.len() {
                     Report::build(ReportKind::Error, (), expr.span.start)
                         .with_message(format!(
@@ -420,11 +513,10 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                         .unwrap();
                     return Err(());
                 }
-                for (ptype, param) in ptypes.iter().zip(params.iter_mut()) {
-                    tc_expression(context, param)?;
+                for (ptype, param) in ptypes.iter().zip(params.iter()) {
                     if param.type_ != Some(*ptype) {
                         return type_mismatch(
-                            *ptype,
+                            Some(*ptype),
                             &expr.span,
                             param.type_,
                             &param.span,
@@ -457,17 +549,17 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             tc_expression(context, if_false)?;
             if condition.type_ != Some(ast::Type::I32) {
                 return type_mismatch(
-                    I32,
+                    Some(I32),
                     &condition.span,
                     condition.type_,
                     &condition.span,
                     context.source,
                 );
             }
-            if let Some(true_type) = if_true.type_ {
+            if if_true.type_.is_some() {
                 if if_true.type_ != if_false.type_ {
                     return type_mismatch(
-                        true_type,
+                        if_true.type_,
                         &if_true.span,
                         if_false.type_,
                         &if_false.span,
@@ -482,21 +574,41 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
         ast::Expr::If {
             ref mut condition,
             ref mut if_true,
-            ref mut if_false
+            ref mut if_false,
         } => {
             tc_expression(context, condition)?;
             tc_expression(context, if_true)?;
             if let Some(ref mut if_false) = if_false {
                 tc_expression(context, if_false)?;
                 if if_true.type_ != if_false.type_ {
-                    // TODO: report type mismatch?
-                    None
+                    return type_mismatch(
+                        if_true.type_,
+                        &if_true.span,
+                        if_false.type_,
+                        &if_false.span,
+                        context.source,
+                    );
                 } else {
                     if_true.type_
                 }
             } else {
                 None
             }
+        }
+        ast::Expr::Return { ref mut value } => {
+            if let Some(ref mut value) = value {
+                tc_expression(context, value)?;
+                if value.type_ != context.return_type {
+                    return type_mismatch(
+                        context.return_type,
+                        &expr.span,
+                        value.type_,
+                        &value.span,
+                        context.source,
+                    );
+                }
+            }
+            None
         }
         ast::Expr::Error => unreachable!(),
     };
@@ -511,7 +623,7 @@ fn tc_mem_location<'a>(
     tc_expression(context, &mut mem_location.right)?;
     if mem_location.left.type_ != Some(I32) {
         return type_mismatch(
-            I32,
+            Some(I32),
             &mem_location.left.span,
             mem_location.left.type_,
             &mem_location.left.span,

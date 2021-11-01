@@ -83,6 +83,9 @@ fn fold_expr(expr: &mut ast::Expression) {
                         Le => (left <= right) as i32,
                         Gt => (left > right) as i32,
                         Ge => (left >= right) as i32,
+                        Lsl => left << right,
+                        Lsr => ((left as u32) >> right) as i32,
+                        Asr => left >> right
                     };
                     expr.expr = ast::Expr::I32Const(result);
                 }
@@ -93,7 +96,7 @@ fn fold_expr(expr: &mut ast::Expression) {
                         Sub => F32Const(left - right),
                         Mul => F32Const(left * right),
                         Div => F32Const(left / right),
-                        Rem | And | Or | Xor => return,
+                        Rem | And | Or | Xor | Lsl | Lsr | Asr => return,
                         Eq => I32Const((left == right) as i32),
                         Ne => I32Const((left != right) as i32),
                         Lt => I32Const((left < right) as i32),
@@ -106,8 +109,10 @@ fn fold_expr(expr: &mut ast::Expression) {
             }
         }
         ast::Expr::I32Const(_) | ast::Expr::F32Const(_) | ast::Expr::Variable { .. } => (),
+        ast::Expr::Assign { ref mut value, .. } => fold_expr(value),
         ast::Expr::LocalTee { ref mut value, .. } => fold_expr(value),
         ast::Expr::Loop { ref mut block, .. } => fold_expr(block),
+        ast::Expr::Branch(_) => (),
         ast::Expr::BranchIf {
             ref mut condition, ..
         } => fold_expr(condition),
@@ -146,6 +151,8 @@ fn fold_expr(expr: &mut ast::Expression) {
                 fold_expr(if_false);
             }
         }
+        ast::Expr::Return { value: Some(ref mut value) } => fold_expr(value),
+        ast::Expr::Return { value: None } => (),
         ast::Expr::Error => unreachable!()
     }
 }

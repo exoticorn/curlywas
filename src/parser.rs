@@ -14,12 +14,14 @@ enum Token {
     Global,
     Mut,
     Loop,
+    Branch,
     BranchIf,
     Defer,
     As,
     Select,
     If,
     Else,
+    Return,
     Ident(String),
     Str(String),
     Int(i32),
@@ -39,12 +41,14 @@ impl fmt::Display for Token {
             Token::Global => write!(f, "global"),
             Token::Mut => write!(f, "mut"),
             Token::Loop => write!(f, "loop"),
+            Token::Branch => write!(f, "branch"),
             Token::BranchIf => write!(f, "branch_if"),
             Token::Defer => write!(f, "defer"),
             Token::As => write!(f, "as"),
             Token::Select => write!(f, "select"),
             Token::If => write!(f, "if"),
             Token::Else => write!(f, "else"),
+            Token::Return => write!(f, "return"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
@@ -191,12 +195,14 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "global" => Token::Global,
         "mut" => Token::Mut,
         "loop" => Token::Loop,
+        "branch" => Token::Branch,
         "branch_if" => Token::BranchIf,
         "defer" => Token::Defer,
         "as" => Token::As,
         "select" => Token::Select,
         "if" => Token::If,
-        "Else" => Token::Else,
+        "else" => Token::Else,
+        "return" => Token::Return,
         _ => Token::Ident(ident),
     });
 
@@ -304,6 +310,10 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
 
             block_expression = Some(block_expr.clone());
 
+            let branch = just(Token::Branch)
+                .ignore_then(ident)
+                .map(|label| ast::Expr::Branch(label));
+
             let branch_if = just(Token::BranchIf)
                 .ignore_then(expression.clone())
                 .then_ignore(just(Token::Ctrl(':')))
@@ -341,6 +351,16 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 })
                 .boxed();
 
+            let assign = ident
+                .clone()
+                .then_ignore(just(Token::Op("=".to_string())))
+                .then(expression.clone())
+                .map(|(name, value)| ast::Expr::Assign {
+                    name,
+                    value: Box::new(value),
+                })
+                .boxed();
+
             let select = just(Token::Select)
                 .ignore_then(
                     expression
@@ -369,15 +389,24 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 .map(|(name, params)| ast::Expr::FuncCall { name, params })
                 .boxed();
 
+            let return_ = just(Token::Return)
+                .ignore_then(expression.clone().or_not())
+                .map(|value| ast::Expr::Return {
+                    value: value.map(Box::new),
+                });
+
             let atom = val
                 .or(tee)
                 .or(function_call)
-                .or(variable)
+                .or(assign)
                 .or(local_tee)
+                .or(variable)
                 .or(block_expr)
+                .or(branch)
                 .or(branch_if)
                 .or(let_)
                 .or(select)
+                .or(return_)
                 .map_with_span(|expr, span| expr.with_span(span))
                 .or(expression
                     .clone()
@@ -540,7 +569,28 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 })
                 .boxed();
 
-            let op_cmp = op_sum
+            let op_shift = op_sum
+                .clone()
+                .then(
+                    just(Token::Op("<<".to_string()))
+                        .to(ast::BinOp::Lsl)
+                        .or(just(Token::Op(">>".to_string())).to(ast::BinOp::Lsr))
+                        .or(just(Token::Op(">>>".to_string())).to(ast::BinOp::Asr))
+                        .then(op_sum.clone())
+                        .repeated(),
+                )
+                .foldl(|left, (op, right)| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::BinOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
+                    .with_span(span)
+                })
+                .boxed();
+
+            let op_cmp = op_shift
                 .clone()
                 .then(
                     just(Token::Op("==".to_string()))
@@ -550,7 +600,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                         .or(just(Token::Op("<=".to_string())).to(ast::BinOp::Le))
                         .or(just(Token::Op(">".to_string())).to(ast::BinOp::Gt))
                         .or(just(Token::Op(">=".to_string())).to(ast::BinOp::Ge))
-                        .then(op_sum.clone())
+                        .then(op_shift.clone())
                         .repeated(),
                 )
                 .foldl(|left, (op, right)| {
