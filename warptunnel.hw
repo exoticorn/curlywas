@@ -1,7 +1,6 @@
 import "uw8.ram" memory(2);
-import "uw8.time" global mut time: i32;
 
-export fn tic() {
+export fn tic(time: i32) {
     let i: i32;
     loop pixels {
         let defer x = (i % 320) as f32 - 160.1;
