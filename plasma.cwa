@@ -1,0 +1,16 @@
+import "env.memory" memory(4);
+import "math.sin" fn sin(f32) -> f32;
+import "math.cos" fn cos(f32) -> f32;
+
+export fn tic(time: i32) {
+    let i: i32;
+    loop screen {
+        let x = (i % 320) as f32 / 48 as f32;
+        let y = (i / 320) as f32 / 48 as f32;
+        let t = time as f32 / 200 as f32;
+
+        i?120 = (sin(x + t) * 32 as f32) as i32 + 128;
+
+        branch_if (i := i + 1) < 320*256: screen
+    }
+}

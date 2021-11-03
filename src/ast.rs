@@ -29,7 +29,7 @@ pub enum ImportType {
         type_: Type,
         mutable: bool,
     },
-    // Function { name: String, params: Vec<Type>, result: Option<Type> }
+    Function { name: String, params: Vec<Type>, result: Option<Type> }
 }
 
 #[derive(Debug)]

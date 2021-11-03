@@ -24,6 +24,7 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
     }
 
     let mut globals: HashMap<&str, u32> = HashMap::new();
+    let mut function_map = HashMap::new();
 
     {
         let mut imports = ImportSection::new();
@@ -56,6 +57,18 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
                     }
                     .into()
                 }
+                ast::ImportType::Function {
+                    ref name,
+                    ref params,
+                    ref result,
+                } => {
+                    function_map.insert(name.clone(), function_map.len() as u32);
+                    EntityType::Function(
+                        *function_types
+                            .get(&(params.clone(), result.clone()))
+                            .unwrap() as u32,
+                    )
+                }
             };
             imports.import(module, name, type_);
         }
@@ -68,16 +81,15 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         let mut exports = ExportSection::new();
         let mut code = CodeSection::new();
 
-        let mut function_map = HashMap::new();
         for func in script.functions.iter() {
             function_map.insert(func.name.clone(), function_map.len() as u32);
         }
 
-        for (index, func) in script.functions.iter().enumerate() {
+        for func in script.functions.iter() {
             let type_ = *function_types.get(&function_type_key(func)).unwrap();
             functions.function(type_ as u32);
             if func.export {
-                exports.export(&func.name, Export::Function(index as u32));
+                exports.export(&func.name, Export::Function(*function_map.get(&func.name).unwrap() as u32));
             }
 
             code.function(&emit_function(func, &globals, &function_map));
@@ -96,11 +108,23 @@ type FunctionTypeKey = (Vec<ast::Type>, Option<ast::Type>);
 fn collect_function_types(script: &ast::Script) -> HashMap<FunctionTypeKey, usize> {
     let mut types: HashMap<FunctionTypeKey, usize> = HashMap::new();
 
+    for import in &script.imports {
+        if let ast::ImportType::Function {
+            ref params,
+            ref result,
+            ..
+        } = import.type_
+        {
+            let index = types.len();
+            types
+                .entry((params.clone(), result.clone()))
+                .or_insert(index);
+        }
+    }
+
     for func in &script.functions {
         let index = types.len();
-        types
-            .entry(function_type_key(func))
-            .or_insert_with(|| index);
+        types.entry(function_type_key(func)).or_insert(index);
     }
 
     types

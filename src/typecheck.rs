@@ -47,7 +47,29 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
                     );
                 }
             }
-            // ast::ImportType::Function { .. } => todo!(),
+            ast::ImportType::Function {
+                ref name,
+                ref params,
+                result: ref result_type,
+            } => {
+                if let Some(fnc) = context.functions.get(name) {
+                    result = report_duplicate_definition(
+                        "Function already defined",
+                        &import.span,
+                        &fnc.span,
+                        source,
+                    );
+                } else {
+                    context.functions.insert(
+                        name.clone(),
+                        FunctionType {
+                            span: import.span.clone(),
+                            params: params.clone(),
+                            type_: *result_type,
+                        },
+                    );
+                }
+            }
             ast::ImportType::Memory(..) => (),
         }
     }

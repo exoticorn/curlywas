@@ -706,9 +706,27 @@ fn top_level_item_parser() -> impl Parser<Token, ast::TopLevelItem, Error = Simp
             type_,
         });
 
+    let import_function = just(Token::Fn)
+        .ignore_then(identifier.clone())
+        .then(
+            type_parser()
+                .separated_by(just(Token::Ctrl(',')))
+                .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+        )
+        .then(
+            just(Token::Op("->".to_string()))
+                .ignore_then(type_parser())
+                .or_not(),
+        )
+        .map(|((name, params), result)| ast::ImportType::Function {
+            name,
+            params,
+            result,
+        });
+
     let import = just(Token::Import)
         .ignore_then(string)
-        .then(import_memory.or(import_global))
+        .then(import_memory.or(import_global).or(import_function))
         .then_ignore(just(Token::Ctrl(';')))
         .map_with_span(|(import, type_), span| {
             ast::TopLevelItem::Import(ast::Import {
