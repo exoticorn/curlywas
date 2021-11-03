@@ -5,11 +5,11 @@ import "math.cos" fn cos(f32) -> f32;
 export fn tic(time: i32) {
     let i: i32;
     loop screen {
-        let x = (i % 320) as f32 / 48 as f32;
-        let y = (i / 320) as f32 / 48 as f32;
-        let t = time as f32 / 200 as f32;
+        let defer x = (i % 320) as f32 / 48 as f32;
+        let defer y = (i / 320) as f32 / 48 as f32;
+        let defer t = time as f32 / 200 as f32;
 
-        i?120 = (sin(x + t) * 32 as f32) as i32 + 128;
+        i?120 = ((sin(x + sin(y - t / 4 as f32) * 3 as f32 + t / 5 as f32) + sin(y + sin(x - t / 3 as f32) + t / 6 as f32)) * 63 as f32) as i32 + 128;
 
         branch_if (i := i + 1) < 320*256: screen
     }

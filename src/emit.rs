@@ -546,6 +546,8 @@ fn builtin_function(name: &str, params: &[ast::Type]) -> Option<Instruction<'sta
     let inst = match (name, params) {
         ("sqrt", &[F32]) => Instruction::F32Sqrt,
         ("abs", &[F32]) => Instruction::F32Abs,
+        ("min", &[F32, F32]) => Instruction::F32Min,
+        ("max", &[F32, F32]) => Instruction::F32Max,
         _ => return None,
     };
     Some(inst)

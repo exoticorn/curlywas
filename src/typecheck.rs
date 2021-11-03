@@ -674,6 +674,8 @@ fn builtin_function_types(name: &str) -> Option<(&'static [ast::Type], Option<as
     let types: (&'static [ast::Type], Option<ast::Type>) = match name {
         "sqrt" => (&[F32], Some(F32)),
         "abs" => (&[F32], Some(F32)),
+        "min" => (&[F32, F32], Some(F32)),
+        "max" => (&[F32, F32], Some(F32)),
         _ => return None,
     };
     Some(types)
