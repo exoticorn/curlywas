@@ -1,4 +1,4 @@
-import "uw8.ram" memory(8);
+import "env.memory" memory(8);
 
 export fn load_uw8(module_start: i32, module_end: i32, base_start: i32, base_end: i32) -> i32 {
     if ?module_start == 0 {

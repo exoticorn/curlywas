@@ -1,4 +1,4 @@
-import "uw8.ram" memory(2);
+import "env.memory" memory(2);
 
 export fn tic(time: i32) {
   let i: i32;
