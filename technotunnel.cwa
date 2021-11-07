@@ -1,6 +1,6 @@
 import "env.memory" memory(4);
-import "math.sin" fn sin(f32) -> f32;
-import "math.atan2" fn atan2(f32, f32) -> f32;
+import "env.sin" fn sin(f32) -> f32;
+import "env.atan2" fn atan2(f32, f32) -> f32;
 
 export fn tic(time: i32) {
     let i: i32;

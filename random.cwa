@@ -1,0 +1,23 @@
+import "env.memory" memory(4);
+
+fn random() -> i32 {
+    let seed = !0;
+    seed = seed ^ (seed << 13);
+    seed = seed ^ (seed >> 17);
+    seed = seed ^ (seed << 5);
+    !0 = seed;
+    seed * 625341585
+}
+
+fn seed(s: i32) {
+    !0 = (s + (s >>> 31)) * 2060714111;
+}
+
+export fn tic(time: i32) {
+    let i: i32;
+    loop pixels {
+        seed(i + time / 10);
+        i?120 = random();
+        branch_if (i := i + 1) < 320*256: pixels
+    }
+}
