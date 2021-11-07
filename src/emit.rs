@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, Export, ExportSection, Function, FunctionSection,
-    GlobalType, ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection, ValType,
+    GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection,
+    ValType,
 };
 
 use crate::ast;
@@ -76,6 +77,18 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         module.section(&imports);
     }
 
+    let mut global_section = GlobalSection::new();
+    for var in &script.global_vars {
+        global_section.global(
+            GlobalType {
+                val_type: map_type(var.type_.unwrap()),
+                mutable: var.mutable,
+            },
+            &const_instr(&var.value),
+        );
+        globals.insert(&var.name, globals.len() as u32);
+    }
+
     {
         let mut functions = FunctionSection::new();
         let mut exports = ExportSection::new();
@@ -89,13 +102,17 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
             let type_ = *function_types.get(&function_type_key(func)).unwrap();
             functions.function(type_ as u32);
             if func.export {
-                exports.export(&func.name, Export::Function(*function_map.get(&func.name).unwrap() as u32));
+                exports.export(
+                    &func.name,
+                    Export::Function(*function_map.get(&func.name).unwrap() as u32),
+                );
             }
 
             code.function(&emit_function(func, &globals, &function_map));
         }
 
         module.section(&functions);
+        module.section(&global_section);
         module.section(&exports);
         module.section(&code);
     }
@@ -133,6 +150,14 @@ fn collect_function_types(script: &ast::Script) -> HashMap<FunctionTypeKey, usiz
 fn function_type_key(func: &ast::Function) -> FunctionTypeKey {
     let param_types: Vec<_> = func.params.iter().map(|(_, type_)| *type_).collect();
     (param_types, func.type_)
+}
+
+fn const_instr(expr: &ast::Expression) -> Instruction {
+    match expr.expr {
+        ast::Expr::I32Const(v) => Instruction::I32Const(v),
+        ast::Expr::F32Const(v) => Instruction::F32Const(v),
+        _ => unreachable!(),
+    }
 }
 
 struct FunctionContext<'a> {
@@ -213,7 +238,11 @@ fn collect_locals_expr<'a>(expr: &ast::Expression, locals: &mut Vec<(String, ast
             collect_locals_expr(&mem_location.left, locals);
             collect_locals_expr(value, locals);
         }
-        ast::Expr::Variable { .. } | ast::Expr::I32Const(_) | ast::Expr::F32Const(_) => (),
+        ast::Expr::Variable { .. }
+        | ast::Expr::I32Const(_)
+        | ast::Expr::I64Const(_)
+        | ast::Expr::F32Const(_)
+        | ast::Expr::F64Const(_) => (),
         ast::Expr::UnaryOp { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::BinOp { left, right, .. } => {
             collect_locals_expr(left, locals);
@@ -331,12 +360,32 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             use ast::UnaryOp::*;
             match (value.type_.unwrap(), op) {
                 (I32, Negate) => {
-                    // TODO: try to improve this uglyness
                     ctx.function.instruction(&Instruction::I32Const(0));
                     emit_expression(ctx, value);
                     ctx.function.instruction(&Instruction::I32Sub);
                 }
-                _ => unreachable!(),
+                (I64, Negate) => {
+                    ctx.function.instruction(&Instruction::I64Const(0));
+                    emit_expression(ctx, value);
+                    ctx.function.instruction(&Instruction::I64Sub);
+                }
+                (F32, Negate) => {
+                    emit_expression(ctx, value);
+                    ctx.function.instruction(&Instruction::F32Neg);
+                }
+                (F64, Negate) => {
+                    emit_expression(ctx, value);
+                    ctx.function.instruction(&Instruction::F64Neg);
+                }
+                (I32, Not) => {
+                    emit_expression(ctx, value);
+                    ctx.function.instruction(&Instruction::I32Eqz);
+                }
+                (I64, Not) => {
+                    emit_expression(ctx, value);
+                    ctx.function.instruction(&Instruction::I64Eqz);
+                }
+                (_, Not) => unreachable!(),
             };
         }
         ast::Expr::BinOp {
@@ -365,6 +414,24 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 (I32, Lsr) => Instruction::I32ShrU,
                 (I32, Asr) => Instruction::I32ShrS,
 
+                (I64, Add) => Instruction::I64Add,
+                (I64, Sub) => Instruction::I64Sub,
+                (I64, Mul) => Instruction::I64Mul,
+                (I64, Div) => Instruction::I64DivS,
+                (I64, Rem) => Instruction::I64RemS,
+                (I64, And) => Instruction::I64And,
+                (I64, Or) => Instruction::I64Or,
+                (I64, Xor) => Instruction::I64Xor,
+                (I64, Eq) => Instruction::I64Eq,
+                (I64, Ne) => Instruction::I64Neq,
+                (I64, Lt) => Instruction::I64LtS,
+                (I64, Le) => Instruction::I64LeS,
+                (I64, Gt) => Instruction::I64GtS,
+                (I64, Ge) => Instruction::I64GeS,
+                (I64, Lsl) => Instruction::I64Shl,
+                (I64, Lsr) => Instruction::I64ShrU,
+                (I64, Asr) => Instruction::I64ShrS,
+
                 (F32, Add) => Instruction::F32Add,
                 (F32, Sub) => Instruction::F32Sub,
                 (F32, Mul) => Instruction::F32Mul,
@@ -377,8 +444,17 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 (F32, Gt) => Instruction::F32Gt,
                 (F32, Ge) => Instruction::F32Ge,
 
-                (I64, _) => todo!(),
-                (F64, _) => todo!(),
+                (F64, Add) => Instruction::F64Add,
+                (F64, Sub) => Instruction::F64Sub,
+                (F64, Mul) => Instruction::F64Mul,
+                (F64, Div) => Instruction::F64Div,
+                (F64, Rem | And | Or | Xor | Lsl | Lsr | Asr) => unreachable!(),
+                (F64, Eq) => Instruction::F64Eq,
+                (F64, Ne) => Instruction::F64Neq,
+                (F64, Lt) => Instruction::F64Lt,
+                (F64, Le) => Instruction::F64Le,
+                (F64, Gt) => Instruction::F64Gt,
+                (F64, Ge) => Instruction::F64Ge,
             });
         }
         ast::Expr::Branch(label) => {
@@ -409,8 +485,14 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         ast::Expr::I32Const(v) => {
             ctx.function.instruction(&Instruction::I32Const(*v));
         }
+        ast::Expr::I64Const(v) => {
+            ctx.function.instruction(&Instruction::I64Const(*v));
+        }
         ast::Expr::F32Const(v) => {
             ctx.function.instruction(&Instruction::F32Const(*v));
+        }
+        ast::Expr::F64Const(v) => {
+            ctx.function.instruction(&Instruction::F64Const(*v));
         }
         ast::Expr::Assign { name, value, .. } => {
             emit_expression(ctx, value);
@@ -456,10 +538,20 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             emit_expression(ctx, value);
             use ast::Type::*;
             let inst = match (value.type_.unwrap(), *type_) {
-                (t1, t2) if t1 == t2 => None,
+                (I32, I64) => Some(Instruction::I64ExtendI32S),
+                (I64, I32) => Some(Instruction::I32WrapI64),
                 (I32, F32) => Some(Instruction::F32ConvertI32S),
                 (F32, I32) => Some(Instruction::I32TruncF32S),
-                _ => todo!(),
+                (I64, F32) => Some(Instruction::F32ConvertI64S),
+                (F32, I64) => Some(Instruction::I64TruncF32S),
+                (I32, F64) => Some(Instruction::F64ConvertI32S),
+                (F64, I32) => Some(Instruction::I32TruncF64S),
+                (I64, F64) => Some(Instruction::F64ConvertI64S),
+                (F64, I64) => Some(Instruction::I64TruncF64S),
+                (F32, F64) => Some(Instruction::F64PromoteF32),
+                (F64, F32) => Some(Instruction::F32DemoteF64),
+
+                (I32, I32) | (I64, I64) | (F32, F32) | (F64, F64) => None,
             };
             if let Some(inst) = inst {
                 ctx.function.instruction(&inst);

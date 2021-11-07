@@ -25,7 +25,9 @@ enum Token {
     Ident(String),
     Str(String),
     Int(i32),
+    Int64(i64),
     Float(String),
+    Float64(String),
     Op(String),
     Ctrl(char),
 }
@@ -52,7 +54,9 @@ impl fmt::Display for Token {
             Token::Ident(s) => write!(f, "{}", s),
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
+            Token::Int64(v) => write!(f, "{}", v),
             Token::Float(v) => write!(f, "{}", v),
+            Token::Float64(v) => write!(f, "{}", v),
             Token::Op(s) => write!(f, "{}", s),
             Token::Ctrl(c) => write!(f, "{}", c),
         }
@@ -164,12 +168,23 @@ fn report_errors(errors: Vec<Simple<String>>, source: &str) {
 }
 
 fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
+    let float64 = text::int(10)
+        .chain::<char, _, _>(just('.').chain(text::digits(10)))
+        .then_ignore(seq::<_, _, Simple<char>>("f64".chars()))
+        .collect::<String>()
+        .map(Token::Float64);
+
     let float = text::int(10)
         .chain::<char, _, _>(just('.').chain(text::digits(10)))
         .collect::<String>()
         .map(Token::Float);
 
-    let int = text::int(10).map(|s: String| Token::Int(s.parse().unwrap()));
+    // TODO: support hex numbers
+    let int64 = text::int(10)
+        .then_ignore(seq::<_, _, Simple<char>>("i64".chars()))
+        .map(|s: String| Token::Int64(s.parse::<u64>().unwrap() as i64));
+
+    let int = text::int(10).map(|s: String| Token::Int(s.parse::<u32>().unwrap() as i32));
 
     let str_ = just('"')
         .ignore_then(filter(|c| *c != '"').repeated())
@@ -215,6 +230,8 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let comment = single_line.or(multi_line);
 
     let token = float
+        .or(float64)
+        .or(int64)
         .or(int)
         .or(str_)
         .or(op)
@@ -241,13 +258,32 @@ fn map_token<O>(
     })
 }
 
-fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> + Clone {
-    recursive(|block| {
+fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + Clone {
+    let identifier = filter_map(|span, tok| match tok {
+        Token::Ident(id) => Ok(id),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    })
+    .labelled("identifier");
+
+    let integer = map_token(|tok| match tok {
+        Token::Int(v) => Some(*v),
+        _ => None,
+    });
+
+    let string = map_token(|tok| match tok {
+        Token::Str(s) => Some(s.clone()),
+        _ => None,
+    });
+
+    let mut expression_out = None;
+    let block = recursive(|block| {
         let mut block_expression = None;
         let expression = recursive(|expression| {
             let val = map_token(|tok| match tok {
                 Token::Int(v) => Some(ast::Expr::I32Const(*v)),
+                Token::Int64(v) => Some(ast::Expr::I64Const(*v)),
                 Token::Float(v) => Some(ast::Expr::F32Const(v.parse().unwrap())),
+                Token::Float64(v) => Some(ast::Expr::F64Const(v.parse().unwrap())),
                 _ => None,
             })
             .labelled("value");
@@ -258,13 +294,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
             })
             .labelled("variable");
 
-            let ident = filter_map(|span, tok| match tok {
-                Token::Ident(id) => Ok(id),
-                _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-            })
-            .labelled("identifier");
-
-            let local_tee = ident
+            let local_tee = identifier
                 .then(just(Token::Op(":=".to_string())).ignore_then(expression.clone()))
                 .map(|(name, expr)| ast::Expr::LocalTee {
                     name,
@@ -273,7 +303,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 .boxed();
 
             let loop_expr = just(Token::Loop)
-                .ignore_then(ident)
+                .ignore_then(identifier)
                 .then(
                     block
                         .clone()
@@ -311,13 +341,13 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
             block_expression = Some(block_expr.clone());
 
             let branch = just(Token::Branch)
-                .ignore_then(ident)
+                .ignore_then(identifier)
                 .map(|label| ast::Expr::Branch(label));
 
             let branch_if = just(Token::BranchIf)
                 .ignore_then(expression.clone())
                 .then_ignore(just(Token::Ctrl(':')))
-                .then(ident)
+                .then(identifier)
                 .map(|(condition, label)| ast::Expr::BranchIf {
                     condition: Box::new(condition),
                     label,
@@ -326,7 +356,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
 
             let let_ = just(Token::Let)
                 .ignore_then(just(Token::Defer).or_not())
-                .then(ident.clone())
+                .then(identifier.clone())
                 .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
                 .then(
                     just(Token::Op("=".to_string()))
@@ -341,7 +371,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 })
                 .boxed();
 
-            let tee = ident
+            let tee = identifier
                 .clone()
                 .then_ignore(just(Token::Op(":=".to_string())))
                 .then(expression.clone())
@@ -351,7 +381,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 })
                 .boxed();
 
-            let assign = ident
+            let assign = identifier
                 .clone()
                 .then_ignore(just(Token::Op("=".to_string())))
                 .then(expression.clone())
@@ -378,7 +408,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 })
                 .boxed();
 
-            let function_call = ident
+            let function_call = identifier
                 .clone()
                 .then(
                     expression
@@ -421,6 +451,7 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
 
             let unary_op = just(Token::Op("-".to_string()))
                 .to(ast::UnaryOp::Negate)
+                .or(just(Token::Ctrl('!')).to(ast::UnaryOp::Not))
                 .map_with_span(|op, span| (op, span))
                 .repeated()
                 .then(atom)
@@ -638,6 +669,8 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
             op_bit
         });
 
+        expression_out = Some(expression.clone());
+
         let block_expression = block_expression.unwrap();
 
         expression
@@ -653,6 +686,130 @@ fn block_parser() -> impl Parser<Token, ast::Expression, Error = Simple<Token>> 
                 }
                 .with_span(span)
             })
+    });
+
+    let expression = expression_out.unwrap();
+
+    let top_level_item = {
+        let import_memory = just(Token::Memory)
+            .ignore_then(integer.delimited_by(Token::Ctrl('('), Token::Ctrl(')')))
+            .map(|min_size| ast::ImportType::Memory(min_size as u32))
+            .boxed();
+
+        let import_global = just(Token::Global)
+            .ignore_then(just(Token::Mut).or_not())
+            .then(identifier.clone())
+            .then_ignore(just(Token::Ctrl(':')))
+            .then(type_parser())
+            .map(|((mut_opt, name), type_)| ast::ImportType::Variable {
+                mutable: mut_opt.is_some(),
+                name,
+                type_,
+            })
+            .boxed();
+
+        let import_function = just(Token::Fn)
+            .ignore_then(identifier.clone())
+            .then(
+                type_parser()
+                    .separated_by(just(Token::Ctrl(',')))
+                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+            )
+            .then(
+                just(Token::Op("->".to_string()))
+                    .ignore_then(type_parser())
+                    .or_not(),
+            )
+            .map(|((name, params), result)| ast::ImportType::Function {
+                name,
+                params,
+                result,
+            })
+            .boxed();
+
+        let import = just(Token::Import)
+            .ignore_then(string)
+            .then(import_memory.or(import_global).or(import_function))
+            .then_ignore(just(Token::Ctrl(';')))
+            .map_with_span(|(import, type_), span| {
+                ast::TopLevelItem::Import(ast::Import {
+                    span,
+                    import,
+                    type_,
+                })
+            })
+            .boxed();
+
+        let parameter = identifier
+            .clone()
+            .then_ignore(just(Token::Ctrl(':')))
+            .then(type_parser())
+            .boxed();
+
+        let function = just(Token::Export)
+            .or_not()
+            .then_ignore(just(Token::Fn))
+            .then(identifier.clone())
+            .then(
+                parameter
+                    .separated_by(just(Token::Ctrl(',')))
+                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+            )
+            .then(
+                just(Token::Op("->".to_string()))
+                    .ignore_then(type_parser())
+                    .or_not(),
+            )
+            .then(
+                block
+                    .clone()
+                    .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
+            )
+            .map_with_span(|((((export, name), params), type_), body), span| {
+                ast::TopLevelItem::Function(ast::Function {
+                    span,
+                    params,
+                    export: export.is_some(),
+                    name,
+                    type_,
+                    body,
+                })
+            })
+            .boxed();
+
+        let global = just(Token::Global)
+            .ignore_then(just(Token::Mut).or_not())
+            .then(identifier.clone())
+            .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
+            .then(just(Token::Op("=".to_string())).ignore_then(expression.clone()))
+            .then_ignore(just(Token::Ctrl(';')))
+            .map_with_span(|(((mutable, name), type_), value), span| {
+                ast::TopLevelItem::GlobalVar(ast::GlobalVar {
+                    name,
+                    type_,
+                    value,
+                    mutable: mutable.is_some(),
+                    span,
+                })
+            });
+
+        import.or(function).or(global).boxed()
+    };
+
+    top_level_item.repeated().then_ignore(end()).map(|items| {
+        let mut script = ast::Script {
+            imports: Vec::new(),
+            global_vars: Vec::new(),
+            functions: Vec::new(),
+        };
+        for item in items {
+            match item {
+                ast::TopLevelItem::Import(i) => script.imports.push(i),
+                ast::TopLevelItem::GlobalVar(v) => script.global_vars.push(v),
+                ast::TopLevelItem::Function(f) => script.functions.push(f),
+            }
+        }
+        script
     })
 }
 
@@ -673,129 +830,4 @@ fn type_parser() -> impl Parser<Token, ast::Type, Error = Simple<Token>> + Clone
             Some(tok),
         )),
     })
-}
-
-fn top_level_item_parser() -> impl Parser<Token, ast::TopLevelItem, Error = Simple<Token>> + Clone {
-    let integer = map_token(|tok| match tok {
-        Token::Int(v) => Some(*v),
-        _ => None,
-    });
-
-    let string = map_token(|tok| match tok {
-        Token::Str(s) => Some(s.clone()),
-        _ => None,
-    });
-
-    let identifier = map_token(|tok| match tok {
-        Token::Ident(id) => Some(id.clone()),
-        _ => None,
-    });
-
-    let import_memory = just(Token::Memory)
-        .ignore_then(integer.delimited_by(Token::Ctrl('('), Token::Ctrl(')')))
-        .map(|min_size| ast::ImportType::Memory(min_size as u32));
-
-    let import_global = just(Token::Global)
-        .ignore_then(just(Token::Mut).or_not())
-        .then(identifier.clone())
-        .then_ignore(just(Token::Ctrl(':')))
-        .then(type_parser())
-        .map(|((mut_opt, name), type_)| ast::ImportType::Variable {
-            mutable: mut_opt.is_some(),
-            name,
-            type_,
-        });
-
-    let import_function = just(Token::Fn)
-        .ignore_then(identifier.clone())
-        .then(
-            type_parser()
-                .separated_by(just(Token::Ctrl(',')))
-                .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
-        )
-        .then(
-            just(Token::Op("->".to_string()))
-                .ignore_then(type_parser())
-                .or_not(),
-        )
-        .map(|((name, params), result)| ast::ImportType::Function {
-            name,
-            params,
-            result,
-        });
-
-    let import = just(Token::Import)
-        .ignore_then(string)
-        .then(import_memory.or(import_global).or(import_function))
-        .then_ignore(just(Token::Ctrl(';')))
-        .map_with_span(|(import, type_), span| {
-            ast::TopLevelItem::Import(ast::Import {
-                span,
-                import,
-                type_,
-            })
-        });
-
-    let parameter = identifier
-        .clone()
-        .then_ignore(just(Token::Ctrl(':')))
-        .then(type_parser());
-
-    let function = just(Token::Export)
-        .or_not()
-        .then_ignore(just(Token::Fn))
-        .then(identifier.clone())
-        .then(
-            parameter
-                .separated_by(just(Token::Ctrl(',')))
-                .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
-        )
-        .then(
-            just(Token::Op("->".to_string()))
-                .ignore_then(type_parser())
-                .or_not(),
-        )
-        .then(block_parser().delimited_by(Token::Ctrl('{'), Token::Ctrl('}')))
-        .map_with_span(|((((export, name), params), type_), body), span| {
-            ast::TopLevelItem::Function(ast::Function {
-                span,
-                params,
-                export: export.is_some(),
-                name,
-                type_,
-                body,
-            })
-        });
-
-    let global = just(Token::Global)
-        .ignore_then(identifier.clone())
-        .then_ignore(just(Token::Ctrl(':')))
-        .then(type_parser())
-        .then_ignore(just(Token::Ctrl(';')))
-        .map_with_span(|(name, type_), span| {
-            ast::TopLevelItem::GlobalVar(ast::GlobalVar { name, type_, span })
-        });
-
-    import.or(function).or(global)
-}
-
-fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + Clone {
-    top_level_item_parser()
-        .repeated()
-        .then_ignore(end())
-        .map(|items| {
-            let mut script = ast::Script {
-                imports: Vec::new(),
-                global_vars: Vec::new(),
-                functions: Vec::new(),
-            };
-            for item in items {
-                match item {
-                    ast::TopLevelItem::Import(i) => script.imports.push(i),
-                    ast::TopLevelItem::GlobalVar(v) => script.global_vars.push(v),
-                    ast::TopLevelItem::Function(f) => script.functions.push(f),
-                }
-            }
-            script
-        })
 }

@@ -1,6 +1,10 @@
 use crate::ast;
 
 pub fn fold_script(script: &mut ast::Script) {
+    for var in &mut script.global_vars {
+        fold_expr(&mut var.value);
+    }
+
     for func in &mut script.functions {
         fold_expr(&mut func.body);
     }
@@ -40,6 +44,11 @@ fn fold_expr(expr: &mut ast::Expression) {
             fold_expr(value);
             let result = match (op, &value.expr) {
                 (ast::UnaryOp::Negate, ast::Expr::I32Const(value)) => Some(ast::Expr::I32Const(-*value)),
+                (ast::UnaryOp::Negate, ast::Expr::I64Const(value)) => Some(ast::Expr::I64Const(-*value)),
+                (ast::UnaryOp::Negate, ast::Expr::F32Const(value)) => Some(ast::Expr::F32Const(-*value)),
+                (ast::UnaryOp::Negate, ast::Expr::F64Const(value)) => Some(ast::Expr::F64Const(-*value)),
+                (ast::UnaryOp::Not, ast::Expr::I32Const(value)) => Some(ast::Expr::I32Const((*value == 0) as i32)),
+                (ast::UnaryOp::Not, ast::Expr::I64Const(value)) => Some(ast::Expr::I32Const((*value == 0) as i32)),
                 _ => None
             };
             if let Some(result) = result {
@@ -89,6 +98,40 @@ fn fold_expr(expr: &mut ast::Expression) {
                     };
                     expr.expr = ast::Expr::I32Const(result);
                 }
+                (&ast::Expr::I64Const(left), &ast::Expr::I64Const(right)) => {
+                    use ast::Expr::*;
+                    expr.expr =  match op {
+                        Add => I64Const(left.wrapping_add(right)),
+                        Sub => I64Const(left.wrapping_sub(right)),
+                        Mul => I64Const(left.wrapping_mul(right)),
+                        Div => {
+                            if let Some(result) = left.checked_div(right) {
+                                I64Const(result)
+                            } else {
+                                return;
+                            }
+                        }
+                        Rem => {
+                            if let Some(result) = left.checked_rem(right) {
+                                I64Const(result)
+                            } else {
+                                return;
+                            }
+                        }
+                        And => I64Const(left & right),
+                        Or => I64Const(left | right),
+                        Xor => I64Const(left ^ right),
+                        Eq => I32Const((left == right) as i32),
+                        Ne => I32Const((left != right) as i32),
+                        Lt => I32Const((left < right) as i32),
+                        Le => I32Const((left <= right) as i32),
+                        Gt => I32Const((left > right) as i32),
+                        Ge => I32Const((left >= right) as i32),
+                        Lsl => I64Const(left << right),
+                        Lsr => I64Const(((left as u64) >> right) as i64),
+                        Asr => I64Const(left >> right)
+                    };
+                }
                 (&ast::Expr::F32Const(left), &ast::Expr::F32Const(right)) => {
                     use ast::Expr::*;
                     expr.expr = match op {
@@ -105,10 +148,26 @@ fn fold_expr(expr: &mut ast::Expression) {
                         Ge => I32Const((left >= right) as i32),
                     };
                 }
+                (&ast::Expr::F64Const(left), &ast::Expr::F64Const(right)) => {
+                    use ast::Expr::*;
+                    expr.expr = match op {
+                        Add => F64Const(left + right),
+                        Sub => F64Const(left - right),
+                        Mul => F64Const(left * right),
+                        Div => F64Const(left / right),
+                        Rem | And | Or | Xor | Lsl | Lsr | Asr => return,
+                        Eq => I32Const((left == right) as i32),
+                        Ne => I32Const((left != right) as i32),
+                        Lt => I32Const((left < right) as i32),
+                        Le => I32Const((left <= right) as i32),
+                        Gt => I32Const((left > right) as i32),
+                        Ge => I32Const((left >= right) as i32),
+                    };
+                }
                 _ => (),
             }
         }
-        ast::Expr::I32Const(_) | ast::Expr::F32Const(_) | ast::Expr::Variable { .. } => (),
+        ast::Expr::I32Const(_) | ast::Expr::I64Const(_) | ast::Expr::F32Const(_) | ast::Expr::F64Const(_) | ast::Expr::Variable { .. } => (),
         ast::Expr::Assign { ref mut value, .. } => fold_expr(value),
         ast::Expr::LocalTee { ref mut value, .. } => fold_expr(value),
         ast::Expr::Loop { ref mut block, .. } => fold_expr(block),

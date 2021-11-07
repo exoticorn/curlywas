@@ -36,7 +36,9 @@ pub enum ImportType {
 pub struct GlobalVar {
     pub span: Span,
     pub name: String,
-    pub type_: Type,
+    pub value: Expression,
+    pub type_: Option<Type>,
+    pub mutable: bool
 }
 
 #[derive(Debug)]
@@ -71,7 +73,9 @@ pub enum Expr {
         final_expression: Option<Box<Expression>>,
     },
     I32Const(i32),
+    I64Const(i64),
     F32Const(f32),
+    F64Const(f64),
     Variable(String),
     Let {
         name: String,
@@ -147,6 +151,7 @@ impl Expr {
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
     Negate,
+    Not
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -10,6 +10,7 @@ type Result<T> = std::result::Result<T, ()>;
 struct Var {
     span: Span,
     type_: ast::Type,
+    mutable: bool,
 }
 type Vars = HashMap<String, Var>;
 
@@ -28,7 +29,9 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
     for import in &script.imports {
         match import.type_ {
             ast::ImportType::Variable {
-                ref name, type_, ..
+                ref name,
+                type_,
+                mutable,
             } => {
                 if let Some(Var { span, .. }) = context.global_vars.get(name) {
                     result = report_duplicate_definition(
@@ -43,6 +46,7 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
                         Var {
                             type_,
                             span: import.span.clone(),
+                            mutable,
                         },
                     );
                 }
@@ -74,15 +78,24 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
         }
     }
 
-    for v in &script.global_vars {
+    for v in &mut script.global_vars {
         if let Some(Var { span, .. }) = context.global_vars.get(&v.name) {
             result = report_duplicate_definition("Global already defined", &v.span, span, source);
         } else {
+            tc_const(&mut v.value, source)?;
+            if v.type_ != v.value.type_ {
+                if v.type_.is_some() {
+                    result = type_mismatch(v.type_, &v.span, v.value.type_, &v.value.span, source);
+                } else {
+                    v.type_ = v.value.type_;
+                }
+            }
             context.global_vars.insert(
                 v.name.clone(),
                 Var {
-                    type_: v.type_,
+                    type_: v.type_.unwrap(),
                     span: v.span.clone(),
+                    mutable: v.mutable,
                 },
             );
         }
@@ -121,6 +134,7 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
                     Var {
                         type_: *type_,
                         span: f.span.clone(),
+                        mutable: true,
                     },
                 );
             }
@@ -239,6 +253,20 @@ fn unknown_variable(span: &Span, source: &str) -> Result<()> {
     Err(())
 }
 
+fn immutable_assign(span: &Span, source: &str) -> Result<()> {
+    Report::build(ReportKind::Error, (), span.start)
+        .with_message("Trying to assign to immutable variable")
+        .with_label(
+            Label::new(span.clone())
+                .with_message("Trying to assign to immutable variable")
+                .with_color(Color::Red),
+        )
+        .finish()
+        .eprint(Source::from(source))
+        .unwrap();
+    Err(())
+}
+
 fn missing_label(span: &Span, source: &str) -> Result<()> {
     Report::build(ReportKind::Error, (), span.start)
         .with_message("Label not found")
@@ -311,6 +339,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     Var {
                         type_: *type_,
                         span: expr.span.clone(),
+                        mutable: true,
                     },
                 );
             } else {
@@ -350,13 +379,24 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             None
         }
         ast::Expr::I32Const(_) => Some(ast::Type::I32),
+        ast::Expr::I64Const(_) => Some(ast::Type::I64),
         ast::Expr::F32Const(_) => Some(ast::Type::F32),
+        ast::Expr::F64Const(_) => Some(ast::Type::F64),
         ast::Expr::UnaryOp {
-            op: _,
+            op,
             ref mut value,
         } => {
             tc_expression(context, value)?;
-            todo!();
+            if value.type_.is_none() {
+                return expected_type(&value.span, context.source);
+            }
+            use ast::Type::*;
+            use ast::UnaryOp::*;
+            Some(match (value.type_.unwrap(), op) {
+                (t, Negate) => t,
+                (I32 | I64, Not) => I32,
+                (_, Not) => return type_mismatch(Some(I32), &expr.span, value.type_, &value.span, context.source)
+            })
         }
         ast::Expr::BinOp {
             op,
@@ -382,7 +422,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             match op {
                 Add | Sub | Mul | Div => left.type_,
                 Rem | And | Or | Xor | Lsl | Lsr | Asr => {
-                    if left.type_ != Some(I32) {
+                    if left.type_ != Some(I32) && left.type_ != Some(I64) {
                         return type_mismatch(
                             Some(I32),
                             &left.span,
@@ -414,7 +454,9 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
         } => {
             tc_expression(context, value)?;
             if let Some(&Var {
-                type_, ref span, ..
+                type_,
+                ref span,
+                mutable,
             }) = context
                 .local_vars
                 .get(name)
@@ -429,6 +471,9 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                         context.source,
                     );
                 }
+                if !mutable {
+                    return immutable_assign(&expr.span, context.source);
+                }
             } else {
                 return unknown_variable(&expr.span, context.source);
             }
@@ -440,7 +485,9 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
         } => {
             tc_expression(context, value)?;
             if let Some(&Var {
-                type_, ref span, ..
+                type_,
+                ref span,
+                mutable,
             }) = context.local_vars.get(name)
             {
                 if value.type_ != Some(type_) {
@@ -451,6 +498,9 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                         &value.span,
                         context.source,
                     );
+                }
+                if !mutable {
+                    return immutable_assign(&expr.span, context.source);
                 }
                 Some(type_)
             } else {
@@ -642,7 +692,7 @@ fn tc_mem_location<'a>(
     mem_location: &mut ast::MemoryLocation,
 ) -> Result<()> {
     tc_expression(context, &mut mem_location.left)?;
-    tc_expression(context, &mut mem_location.right)?;
+    tc_const(&mut mem_location.right, context.source)?;
     if mem_location.left.type_ != Some(I32) {
         return type_mismatch(
             Some(I32),
@@ -652,20 +702,37 @@ fn tc_mem_location<'a>(
             context.source,
         );
     }
-    if let ast::Expr::I32Const(_) = mem_location.right.expr {
-    } else {
-        Report::build(ReportKind::Error, (), mem_location.right.span.start)
-            .with_message("Expected I32 constant")
-            .with_label(
-                Label::new(mem_location.right.span.clone())
-                    .with_message("Expected I32 constant")
-                    .with_color(Color::Red),
-            )
-            .finish()
-            .eprint(Source::from(context.source))
-            .unwrap();
-        return Err(());
+    if mem_location.right.type_ != Some(I32) {
+        return type_mismatch(
+            Some(I32),
+            &mem_location.right.span,
+            mem_location.right.type_,
+            &mem_location.right.span,
+            context.source,
+        );
     }
+    Ok(())
+}
+
+fn tc_const(expr: &mut ast::Expression, source: &str) -> Result<()> {
+    use ast::Expr::*;
+    expr.type_ = Some(match expr.expr {
+        I32Const(_) => I32,
+        F32Const(_) => F32,
+        _ => {
+            Report::build(ReportKind::Error, (), expr.span.start)
+                .with_message("Expected I32 constant")
+                .with_label(
+                    Label::new(expr.span.clone())
+                        .with_message("Expected I32 constant")
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .eprint(Source::from(source))
+                .unwrap();
+            return Err(());
+        }
+    });
     Ok(())
 }
 
