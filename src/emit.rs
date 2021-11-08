@@ -112,7 +112,9 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         }
 
         module.section(&functions);
-        module.section(&global_section);
+        if !script.global_vars.is_empty() {
+            module.section(&global_section);
+        }
         module.section(&exports);
         module.section(&code);
     }
