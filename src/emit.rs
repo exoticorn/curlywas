@@ -6,7 +6,7 @@ use wasm_encoder::{
     ValType,
 };
 
-use crate::ast;
+use crate::{ast, intrinsics::Intrinsics};
 
 pub fn emit(script: &ast::Script) -> Vec<u8> {
     let mut module = Module::new();
@@ -94,6 +94,8 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         let mut exports = ExportSection::new();
         let mut code = CodeSection::new();
 
+        let intrinsics = Intrinsics::new();
+
         for func in script.functions.iter() {
             function_map.insert(func.name.clone(), function_map.len() as u32);
         }
@@ -108,7 +110,7 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
                 );
             }
 
-            code.function(&emit_function(func, &globals, &function_map));
+            code.function(&emit_function(func, &globals, &function_map, &intrinsics));
         }
 
         module.section(&functions);
@@ -158,6 +160,8 @@ fn const_instr(expr: &ast::Expression) -> Instruction {
     match expr.expr {
         ast::Expr::I32Const(v) => Instruction::I32Const(v),
         ast::Expr::F32Const(v) => Instruction::F32Const(v),
+        ast::Expr::I64Const(v) => Instruction::I64Const(v),
+        ast::Expr::F64Const(v) => Instruction::F64Const(v),
         _ => unreachable!(),
     }
 }
@@ -169,12 +173,14 @@ struct FunctionContext<'a> {
     locals: &'a HashMap<String, u32>,
     labels: Vec<String>,
     deferred_inits: HashMap<&'a str, &'a ast::Expression>,
+    intrinsics: &'a Intrinsics,
 }
 
 fn emit_function(
     func: &ast::Function,
     globals: &HashMap<&str, u32>,
     functions: &HashMap<String, u32>,
+    intrinsics: &Intrinsics,
 ) -> Function {
     let mut locals = Vec::new();
     collect_locals_expr(&func.body, &mut locals);
@@ -199,6 +205,7 @@ fn emit_function(
         locals: &local_map,
         labels: vec![],
         deferred_inits: HashMap::new(),
+        intrinsics,
     };
 
     emit_expression(&mut context, &func.body);
@@ -563,6 +570,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             for param in params {
                 emit_expression(ctx, param);
             }
+
             if let Some(index) = ctx.functions.get(name) {
                 ctx.function.instruction(&Instruction::Call(*index));
             } else {
@@ -571,7 +579,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                     types.push(param.type_.unwrap());
                 }
                 ctx.function
-                    .instruction(&builtin_function(name, &types).unwrap());
+                    .instruction(&ctx.intrinsics.get_instr(name, &types).unwrap());
             }
         }
         ast::Expr::Select {
@@ -633,16 +641,4 @@ fn map_block_type(t: Option<ast::Type>) -> BlockType {
     } else {
         BlockType::Empty
     }
-}
-
-fn builtin_function(name: &str, params: &[ast::Type]) -> Option<Instruction<'static>> {
-    use ast::Type::*;
-    let inst = match (name, params) {
-        ("sqrt", &[F32]) => Instruction::F32Sqrt,
-        ("abs", &[F32]) => Instruction::F32Abs,
-        ("min", &[F32, F32]) => Instruction::F32Min,
-        ("max", &[F32, F32]) => Instruction::F32Max,
-        _ => return None,
-    };
-    Some(inst)
 }

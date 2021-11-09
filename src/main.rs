@@ -7,6 +7,7 @@ mod constfold;
 mod emit;
 mod parser;
 mod typecheck;
+mod intrinsics;
 
 type Span = std::ops::Range<usize>;
 
@@ -35,26 +36,5 @@ fn main() -> Result<()> {
     filename.set_extension("wasm");
     File::create(filename)?.write_all(&wasm)?;
 
-    println!("Size of code section: {} bytes", code_section_size(&wasm)?);
-
     Ok(())
-}
-
-fn code_section_size(wasm: &[u8]) -> Result<usize> {
-    for payload in wasmparser::Parser::new(0).parse_all(wasm) {
-        match payload? {
-            wasmparser::Payload::CodeSectionStart { range, .. } => {
-                let size = range.end - range.start;
-                let section_header_size = match size {
-                    0..=127 => 2,
-                    128..=16383 => 3,
-                    _ => 4,
-                };
-                return Ok(size + section_header_size);
-            }
-            _ => (),
-        }
-    }
-
-    bail!("No code section found");
 }

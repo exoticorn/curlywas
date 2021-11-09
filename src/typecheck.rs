@@ -2,6 +2,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 use std::collections::HashMap;
 
 use crate::ast;
+use crate::intrinsics::Intrinsics;
 use crate::Span;
 use ast::Type::*;
 
@@ -22,6 +23,7 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
         local_vars: HashMap::new(),
         block_stack: Vec::new(),
         return_type: None,
+        intrinsics: Intrinsics::new(),
     };
 
     let mut result = Ok(());
@@ -164,6 +166,7 @@ struct Context<'a> {
     local_vars: Vars,
     block_stack: Vec<String>,
     return_type: Option<ast::Type>,
+    intrinsics: Intrinsics,
 }
 
 fn report_duplicate_definition(
@@ -382,10 +385,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
         ast::Expr::I64Const(_) => Some(ast::Type::I64),
         ast::Expr::F32Const(_) => Some(ast::Type::F32),
         ast::Expr::F64Const(_) => Some(ast::Type::F64),
-        ast::Expr::UnaryOp {
-            op,
-            ref mut value,
-        } => {
+        ast::Expr::UnaryOp { op, ref mut value } => {
             tc_expression(context, value)?;
             if value.type_.is_none() {
                 return expected_type(&value.span, context.source);
@@ -395,7 +395,15 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             Some(match (value.type_.unwrap(), op) {
                 (t, Negate) => t,
                 (I32 | I64, Not) => I32,
-                (_, Not) => return type_mismatch(Some(I32), &expr.span, value.type_, &value.span, context.source)
+                (_, Not) => {
+                    return type_mismatch(
+                        Some(I32),
+                        &expr.span,
+                        value.type_,
+                        &value.span,
+                        context.source,
+                    )
+                }
             })
         }
         ast::Expr::BinOp {
@@ -557,46 +565,43 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
         } => {
             for param in params.iter_mut() {
                 tc_expression(context, param)?;
+                if param.type_.is_none() {
+                    return expected_type(&param.span, context.source);
+                }
             }
-            if let Some((ptypes, rtype)) = context
+            if let Some(type_map) = context
                 .functions
                 .get(name)
-                .map(|fnc| (fnc.params.as_slice(), fnc.type_))
-                .or_else(|| builtin_function_types(name))
+                .map(|fnc| HashMap::from_iter([(fnc.params.clone(), fnc.type_)]))
+                .or_else(|| context.intrinsics.find_types(name))
             {
-                if params.len() != ptypes.len() {
-                    Report::build(ReportKind::Error, (), expr.span.start)
-                        .with_message(format!(
-                            "Expected {} parameters but found {}",
-                            ptypes.len(),
-                            params.len()
-                        ))
-                        .with_label(
-                            Label::new(expr.span.clone())
-                                .with_message(format!(
-                                    "Expected {} parameters but found {}",
-                                    ptypes.len(),
-                                    params.len()
-                                ))
-                                .with_color(Color::Red),
-                        )
+                if let Some(rtype) =
+                    type_map.get(&params.iter().map(|p| p.type_.unwrap()).collect::<Vec<_>>())
+                {
+                    *rtype
+                } else {
+                    let mut report = Report::build(ReportKind::Error, (), expr.span.start)
+                        .with_message("No matching function found");
+                    for (params, rtype) in type_map {
+                        let param_str: Vec<_> = params.into_iter().map(|t| t.to_string()).collect();
+                        let msg = format!(
+                            "Found {}({}){}",
+                            name,
+                            param_str.join(", "),
+                            if let Some(rtype) = rtype {
+                                format!(" -> {}", rtype)
+                            } else {
+                                String::new()
+                            }
+                        );
+                        report = report.with_label(Label::new(expr.span.clone()).with_message(msg));
+                    }
+                    report
                         .finish()
                         .eprint(Source::from(context.source))
                         .unwrap();
                     return Err(());
                 }
-                for (ptype, param) in ptypes.iter().zip(params.iter()) {
-                    if param.type_ != Some(*ptype) {
-                        return type_mismatch(
-                            Some(*ptype),
-                            &expr.span,
-                            param.type_,
-                            &param.span,
-                            context.source,
-                        );
-                    }
-                }
-                rtype
             } else {
                 Report::build(ReportKind::Error, (), expr.span.start)
                     .with_message(format!("Unknown function {}", name))
@@ -718,13 +723,15 @@ fn tc_const(expr: &mut ast::Expression, source: &str) -> Result<()> {
     use ast::Expr::*;
     expr.type_ = Some(match expr.expr {
         I32Const(_) => I32,
+        I64Const(_) => I64,
         F32Const(_) => F32,
+        F64Const(_) => F64,
         _ => {
             Report::build(ReportKind::Error, (), expr.span.start)
-                .with_message("Expected I32 constant")
+                .with_message("Expected constant value")
                 .with_label(
                     Label::new(expr.span.clone())
-                        .with_message("Expected I32 constant")
+                        .with_message("Expected constant value")
                         .with_color(Color::Red),
                 )
                 .finish()
@@ -734,16 +741,4 @@ fn tc_const(expr: &mut ast::Expression, source: &str) -> Result<()> {
         }
     });
     Ok(())
-}
-
-fn builtin_function_types(name: &str) -> Option<(&'static [ast::Type], Option<ast::Type>)> {
-    use ast::Type::*;
-    let types: (&'static [ast::Type], Option<ast::Type>) = match name {
-        "sqrt" => (&[F32], Some(F32)),
-        "abs" => (&[F32], Some(F32)),
-        "min" => (&[F32, F32], Some(F32)),
-        "max" => (&[F32, F32], Some(F32)),
-        _ => return None,
-    };
-    Some(types)
 }

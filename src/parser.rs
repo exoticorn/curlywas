@@ -201,7 +201,16 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
 
     let ctrl = one_of("(){};,:?!".chars()).map(Token::Ctrl);
 
-    let ident = text::ident().map(|ident: String| match ident.as_str() {
+    fn ident() -> impl Parser<char, String, Error = Simple<char>> + Copy + Clone {
+        filter(|c: &char| c.is_ascii_alphabetic() || *c == '_')
+            .map(Some)
+            .chain::<char, Vec<_>, _>(
+                filter(|c: &char| c.is_ascii_alphanumeric() || *c == '_' || *c == '.').repeated(),
+            )
+            .collect()
+    }
+
+    let ident = ident().map(|ident: String| match ident.as_str() {
         "import" => Token::Import,
         "export" => Token::Export,
         "fn" => Token::Fn,

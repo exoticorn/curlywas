@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::Span;
 
 #[derive(Debug)]
@@ -29,7 +31,11 @@ pub enum ImportType {
         type_: Type,
         mutable: bool,
     },
-    Function { name: String, params: Vec<Type>, result: Option<Type> }
+    Function {
+        name: String,
+        params: Vec<Type>,
+        result: Option<Type>,
+    },
 }
 
 #[derive(Debug)]
@@ -38,7 +44,7 @@ pub struct GlobalVar {
     pub name: String,
     pub value: Expression,
     pub type_: Option<Type>,
-    pub mutable: bool
+    pub mutable: bool,
 }
 
 #[derive(Debug)]
@@ -130,10 +136,10 @@ pub enum Expr {
     If {
         condition: Box<Expression>,
         if_true: Box<Expression>,
-        if_false: Option<Box<Expression>>
+        if_false: Option<Box<Expression>>,
     },
     Return {
-        value: Option<Box<Expression>>
+        value: Option<Box<Expression>>,
     },
     Error,
 }
@@ -151,7 +157,7 @@ impl Expr {
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
     Negate,
-    Not
+    Not,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -187,4 +193,15 @@ pub enum Type {
     I64,
     F32,
     F64,
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Type::I32 => write!(f, "i32"),
+            Type::I64 => write!(f, "i64"),
+            Type::F32 => write!(f, "f32"),
+            Type::F64 => write!(f, "f64"),
+        }
+    }
 }
