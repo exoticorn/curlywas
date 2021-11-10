@@ -619,8 +619,8 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         ast::Expr::Return { value } => {
             if let Some(value) = value {
                 emit_expression(ctx, value);
-                ctx.function.instruction(&Instruction::Return);
             }
+            ctx.function.instruction(&Instruction::Return);
         }
         ast::Expr::Error => unreachable!(),
     }

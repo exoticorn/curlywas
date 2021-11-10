@@ -1,0 +1,62 @@
+import "env.memory" memory(1);
+
+import "env.rect" fn rect(i32, i32, i32, i32);
+import "env.oval" fn oval(i32, i32, i32, i32);
+
+global mut pz: f32 = 0.0;
+global mut px: f32 = 2.0;
+global mut py: f32 = 0.0;
+global mut s: f32 = 0.0;
+global mut f: f32 = 0.0;
+
+fn xorshift(state: i32) -> i32 {
+    100902443 * (
+                    (state :=
+                        (state := state ^ (state << 13))
+                        ^ (state >> 17))
+                    ^ (state << 5)
+                )
+}
+
+export fn update() {
+    let y: i32;
+    loop lines {
+        let z = (200 as f32 / (y := y + 1) as f32 + pz) as i32;
+        let x = (xorshift(xorshift(xorshift(z))) & 3) as f32 / 2 as f32 - px;
+        let w = 6 as f32 / sqrt(z as f32);
+        let rx = 80 + (y as f32 * x) as i32;
+        let rw = (y as f32 * w) as i32;
+        
+        let defer c = ((z & 1) + 2) * 17;
+        ?20 = c;
+        rect(rx, y, rw, y / 9);
+        ?20 = c + 17;
+        rect(rx, y + 1, rw, y / 9);
+
+        if y == 120 & py > 0.0 {
+            if x+w < 0.0 | x > 0.0 {
+                return;
+            }
+            py = 0.0;
+            s = 0.0;
+            f = 0.8;
+        }
+
+        branch_if y < 160: lines;
+    };
+
+    ?20 = 50;
+    oval(80 - 11, 114 - 11 + py as i32, 22, 22);
+    ?20 = 17;
+    oval(80 - 6, 114 - 6 + py as i32, 6, 6);
+    let defer pad = ?22;
+    let defer control_speed = 0.03;
+    px = px + (((pad >> 5) & 1) - ((pad >> 4) & 1)) as f32 * control_speed;
+    if pad & 1 {
+        s = s - f - control_speed;
+    }
+    s = s + 0.1;
+    py = py + s;
+    pz = pz + 0.05;
+    f = f * 0.7;
+}
