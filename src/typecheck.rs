@@ -429,7 +429,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             use ast::BinOp::*;
             match op {
                 Add | Sub | Mul | Div => left.type_,
-                Rem | And | Or | Xor | Lsl | Lsr | Asr => {
+                Rem | And | Or | Xor | Shl | ShrU | ShrS | DivU | RemU => {
                     if left.type_ != Some(I32) && left.type_ != Some(I64) {
                         return type_mismatch(
                             Some(I32),
@@ -443,6 +443,19 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     }
                 }
                 Eq | Ne | Lt | Le | Gt | Ge => Some(I32),
+                LtU | LeU | GtU | GeU => {
+                    if left.type_ != Some(I32) && left.type_ != Some(I64) {
+                        return type_mismatch(
+                            Some(I32),
+                            &left.span,
+                            left.type_,
+                            &left.span,
+                            context.source,
+                        );
+                    } else {
+                        Some(I32)
+                    }
+                }
             }
         }
         ast::Expr::Variable(ref name) => {
@@ -687,7 +700,10 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             }
             None
         }
-        ast::Expr::First { ref mut value, ref mut drop } => {
+        ast::Expr::First {
+            ref mut value,
+            ref mut drop,
+        } => {
             tc_expression(context, value)?;
             tc_expression(context, drop)?;
             value.type_

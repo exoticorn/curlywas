@@ -192,7 +192,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .collect::<String>()
         .map(Token::Str);
 
-    let op = one_of("+-*/%&^|<=>".chars())
+    let op = one_of("+-*/%&^|<=>#".chars())
         .repeated()
         .at_least(1)
         .or(just(':').chain(just('=')))
@@ -574,7 +574,9 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     just(Token::Op("*".to_string()))
                         .to(ast::BinOp::Mul)
                         .or(just(Token::Op("/".to_string())).to(ast::BinOp::Div))
+                        .or(just(Token::Op("#/".to_string())).to(ast::BinOp::DivU))
                         .or(just(Token::Op("%".to_string())).to(ast::BinOp::Rem))
+                        .or(just(Token::Op("#%".to_string())).to(ast::BinOp::RemU))
                         .then(memory_op.clone())
                         .repeated(),
                 )
@@ -613,9 +615,9 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .clone()
                 .then(
                     just(Token::Op("<<".to_string()))
-                        .to(ast::BinOp::Lsl)
-                        .or(just(Token::Op(">>".to_string())).to(ast::BinOp::Lsr))
-                        .or(just(Token::Op(">>>".to_string())).to(ast::BinOp::Asr))
+                        .to(ast::BinOp::Shl)
+                        .or(just(Token::Op("#>>".to_string())).to(ast::BinOp::ShrU))
+                        .or(just(Token::Op(">>".to_string())).to(ast::BinOp::ShrS))
                         .then(op_sum.clone())
                         .repeated(),
                 )
@@ -637,9 +639,13 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .to(ast::BinOp::Eq)
                         .or(just(Token::Op("!=".to_string())).to(ast::BinOp::Ne))
                         .or(just(Token::Op("<".to_string())).to(ast::BinOp::Lt))
+                        .or(just(Token::Op("#<".to_string())).to(ast::BinOp::LtU))
                         .or(just(Token::Op("<=".to_string())).to(ast::BinOp::Le))
+                        .or(just(Token::Op("#<=".to_string())).to(ast::BinOp::LeU))
                         .or(just(Token::Op(">".to_string())).to(ast::BinOp::Gt))
+                        .or(just(Token::Op("#>".to_string())).to(ast::BinOp::GtU))
                         .or(just(Token::Op(">=".to_string())).to(ast::BinOp::Ge))
+                        .or(just(Token::Op("#>=".to_string())).to(ast::BinOp::GeU))
                         .then(op_shift.clone())
                         .repeated(),
                 )

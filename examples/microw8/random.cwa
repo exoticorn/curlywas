@@ -9,14 +9,14 @@ fn random() -> i32 {
 fn random64() -> i64 {
     let state: i64;
     randomState = (state := (
-                          state := randomState ^ (randomState >> 12i64)
+                          state := randomState ^ (randomState #>> 12i64)
                       ) ^ (state << 25i64)
-                  ) ^ (state >> 27i64);
+                  ) ^ (state #>> 27i64);
     randomState * 2685821657736338717i64
 }
 
 fn randomf() -> f32 {
-    f32.reinterpret_i32(1065353216 | (random() >> 9)) - 1 as f32
+    f32.reinterpret_i32(1065353216 | (random() #>> 9)) - 1 as f32
 }
 
 fn seed(s: i32) {
@@ -28,8 +28,8 @@ fn seed(s: i32) {
 export fn tic(time: i32) {
     let i: i32;
     loop pixels {
-        seed(i + (time / 100) * 320);
-        i?120 = (randomf() * 256 as f32 + time as f32 / 10 as f32) as i32;
+        seed(i + (time / 10) * 320);
+        i?120 = (randomf() * 256 as f32 + time as f32 / 10 as f32) as i32 & 128;
         branch_if (i := i + 1) < 320*256: pixels
     }
 }

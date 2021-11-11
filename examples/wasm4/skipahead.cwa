@@ -14,7 +14,7 @@ global mut s: f32 = 0.0;
 global mut f: f32 = 0.0;
 
 fn rng(state: i32) -> i32 {
-    94614859 * (state ^ (state >> 17))
+    94614859 * (state ^ (state #>> 17))
 }
 
 fn set_color(color: i32) -> i32 {
@@ -35,7 +35,7 @@ export fn update() {
     loop lines {
         ?(8003-y) = (score := score / 10) % 10 + 48;
         let defer z = (4000 / (y := y + 1) + pz) / 20;
-        let defer x = (rng(rng(rng(rng(z)))) >>> 30) as f32 - px;
+        let defer x = (rng(rng(rng(rng(z)))) >> 30) as f32 - px;
         let defer w = 9 as f32 / sqrt(z as f32);
         let defer rx = 80 + (y as f32 * x) as i32;
         let defer rw = (y as f32 * w) as i32;
@@ -47,10 +47,10 @@ export fn update() {
 
         if y == 120 & py > zero {
             if x < -w | x > zero {
-                if pad & 2 {    // (*)
-                    pz = 30;     // (*)
-                    px = zero;  // (*)
-                }               // (*)
+                if pad & 2 {
+                    pz = 30;
+                    px = zero;
+                }
                 return;
             }
             py = zero;
