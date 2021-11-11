@@ -687,6 +687,11 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             }
             None
         }
+        ast::Expr::First { ref mut value, ref mut drop } => {
+            tc_expression(context, value)?;
+            tc_expression(context, drop)?;
+            value.type_
+        }
         ast::Expr::Error => unreachable!(),
     };
     Ok(())

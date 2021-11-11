@@ -1,59 +1,70 @@
+// Sizecoded port of my TIC-80 game "skip ahead"
+// 512 bytes of uncompressed wasm
+
 import "env.memory" memory(1);
 
 import "env.rect" fn rect(i32, i32, i32, i32);
 import "env.oval" fn oval(i32, i32, i32, i32);
+import "env.text" fn text(i32, i32, i32);
 
-global mut pz: f32 = 0.0;
-global mut px: f32 = 2.0;
+global mut pz: i32 = 30;
+global mut px: f32 = 0.0;
 global mut py: f32 = 0.0;
 global mut s: f32 = 0.0;
 global mut f: f32 = 0.0;
 
-fn xorshift(state: i32) -> i32 {
-    100902443 * (
-                    (state :=
-                        (state := state ^ (state << 13))
-                        ^ (state >> 17))
-                    ^ (state << 5)
-                )
+fn rng(state: i32) -> i32 {
+    94614859 * (state ^ (state >> 17))
+}
+
+fn set_color(color: i32) -> i32 {
+    ?20 = color;
+    6
 }
 
 export fn update() {
     let y: i32;
+    let score = pz;
+    let defer pad = ?22;
+    let defer zero = 0.0;
+
+    let defer control_speed = 0.03;
+    s = s + 0.1 - (f + control_speed) * (pad & 1) as f32;
+    f = f * 0.7;
+
     loop lines {
-        let defer z = (200 as f32 / (y := y + 1) as f32 + pz) as i32;
-        let defer x = (xorshift(xorshift(xorshift(z))) & 3) as f32 / 2 as f32 - px;
-        let defer w = 6 as f32 / sqrt(z as f32);
+        ?(8003-y) = (score := score / 10) % 10 + 48;
+        let defer z = (4000 / (y := y + 1) + pz) / 20;
+        let defer x = (rng(rng(rng(rng(z)))) >>> 30) as f32 - px;
+        let defer w = 9 as f32 / sqrt(z as f32);
         let defer rx = 80 + (y as f32 * x) as i32;
         let defer rw = (y as f32 * w) as i32;
         
         let defer c = ((z & 1) + 2) * 17;
-        ?20 = c;
-        rect(rx, y, rw, y / 9);
-        ?20 = c + 17;
-        rect(rx, y + 1, rw, y / 9);
+        rect(rx, y, rw, y / set_color(c + 17));
 
-        if y == 120 & py > 0.0 {
-            if x < -w | x > 0.0 {
+        text(8000, set_color(c) <| rect(rx, y, rw, 1), set_color(4));
+
+        if y == 120 & py > zero {
+            if x < -w | x > zero {
+                if pad & 2 {    // (*)
+                    pz = 30;     // (*)
+                    px = zero;  // (*)
+                }               // (*)
                 return;
             }
-            py = 0.0;
-            s = 0.0;
+            py = zero;
+            s = zero;
             f = 0.8;
         }
 
         branch_if y < 160: lines;
-    };
+    }
 
-    ?20 = 50;
-    oval(80 - 11, 114 - 11 + py as i32, 22, 22);
-    ?20 = 17;
-    oval(80 - 6, 114 - 6 + py as i32, 6, 6);
-    let defer pad = ?22;
-    let defer control_speed = 0.03;
-    px = px + (((pad >> 5) & 1) - ((pad >> 4) & 1)) as f32 * control_speed;
-    s = s + 0.1 - (f + control_speed) * (pad & 1) as f32;
+    let defer sy = 114 - 11 + py as i32;
+    oval(80 - 6, sy + 5, (set_color(50) <| oval(80 - 11, sy, 22, 22)), set_color(17));
+
+    px = px + (!(pad & 16) - !(pad & 32)) as f32 * control_speed;
     py = py + s;
-    pz = pz + 0.05;
-    f = f * 0.7;
+    pz = pz + 1;
 }

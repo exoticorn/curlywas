@@ -675,7 +675,14 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 })
                 .boxed();
 
-            op_bit
+            let op_first = op_bit.clone().then(
+                just(Token::Op("<|".to_string())).ignore_then(op_bit).repeated()
+            ).foldl(|left, right| {
+                let span = left.span.start..right.span.end;
+                ast::Expr::First { value: Box::new(left), drop: Box::new(right) }.with_span(span)
+            }).boxed();
+
+            op_first
         });
 
         expression_out = Some(expression.clone());

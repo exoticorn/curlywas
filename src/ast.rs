@@ -141,6 +141,10 @@ pub enum Expr {
     Return {
         value: Option<Box<Expression>>,
     },
+    First {
+        value: Box<Expression>,
+        drop: Box<Expression>
+    },
     Error,
 }
 

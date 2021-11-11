@@ -291,6 +291,10 @@ fn collect_locals_expr<'a>(expr: &ast::Expression, locals: &mut Vec<(String, ast
         }
         ast::Expr::Return { value: Some(value) } => collect_locals_expr(value, locals),
         ast::Expr::Return { value: None } => (),
+        ast::Expr::First { value, drop } => {
+            collect_locals_expr(value, locals);
+            collect_locals_expr(drop, locals);
+        }
         ast::Expr::Error => unreachable!(),
     }
 }
@@ -621,6 +625,13 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 emit_expression(ctx, value);
             }
             ctx.function.instruction(&Instruction::Return);
+        }
+        ast::Expr::First { value, drop } => {
+            emit_expression(ctx, value);
+            emit_expression(ctx, drop);
+            if drop.type_.is_some() {
+                ctx.function.instruction(&Instruction::Drop);
+            }
         }
         ast::Expr::Error => unreachable!(),
     }

@@ -212,6 +212,10 @@ fn fold_expr(expr: &mut ast::Expression) {
         }
         ast::Expr::Return { value: Some(ref mut value) } => fold_expr(value),
         ast::Expr::Return { value: None } => (),
+        ast::Expr::First { ref mut value, ref mut drop } => {
+            fold_expr(value);
+            fold_expr(drop);
+        }
         ast::Expr::Error => unreachable!()
     }
 }
