@@ -2,16 +2,16 @@ import "env.memory" memory(2);
 
 export fn tic(time: i32) {
   let i: i32;
-  let defer t = time as f32 / 1000 as f32;
+  let lazy t = time as f32 / 1000 as f32;
   loop pixels {
-    let defer x = (i % 320 - 160) as f32;
-    let defer y = (i / 320) as f32 - 128.5;
-    let defer z = t + 20 as f32 / sqrt(x*x + y*y);
-    let defer z_int = z as i32;
-    let defer q = select(z_int % 9 >= 6, z, (z_int - z_int % 9 + 6) as f32);
-    let defer w = 9 as f32 / y + t;
-    let defer s = q - t;
-    let defer m = x * s / 50 as f32;
+    let lazy x = (i % 320 - 160) as f32;
+    let lazy y = (i / 320) as f32 - 128.5;
+    let lazy z = t + 20 as f32 / sqrt(x*x + y*y);
+    let lazy z_int = z as i32;
+    let lazy q = select(z_int % 9 >= 6, z, (z_int - z_int % 9 + 6) as f32);
+    let lazy w = 9 as f32 / y + t;
+    let lazy s = q - t;
+    let lazy m = x * s / 50 as f32;
 
     i?120 = select(y > 0 as f32 & w < q,
               select(abs(x * (w - t)) < 9 as f32, 15, 7) - w as i32 % 2,

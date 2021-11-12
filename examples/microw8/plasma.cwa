@@ -1,13 +1,13 @@
 import "env.memory" memory(4);
-import "math.sin" fn sin(f32) -> f32;
-import "math.cos" fn cos(f32) -> f32;
+import "env.sin" fn sin(f32) -> f32;
+import "env.cos" fn cos(f32) -> f32;
 
 export fn tic(time: i32) {
     let i: i32;
     loop screen {
-        let defer x = (i % 320) as f32 / 48 as f32;
-        let defer y = (i / 320) as f32 / 48 as f32;
-        let defer t = time as f32 / 200 as f32;
+        let lazy x = (i % 320) as f32 / 48 as f32;
+        let lazy y = (i / 320) as f32 / 48 as f32;
+        let lazy t = time as f32 / 200 as f32;
 
         i?120 = ((sin(x + sin(y - t / 4 as f32) * 3 as f32 + t / 5 as f32) + sin(y + sin(x - t / 3 as f32) + t / 6 as f32)) * 63 as f32) as i32 + 128;
 

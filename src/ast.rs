@@ -7,6 +7,7 @@ pub struct Script {
     pub imports: Vec<Import>,
     pub global_vars: Vec<GlobalVar>,
     pub functions: Vec<Function>,
+    pub data: Vec<Data>,
 }
 
 #[derive(Debug)]
@@ -14,6 +15,7 @@ pub enum TopLevelItem {
     Import(Import),
     GlobalVar(GlobalVar),
     Function(Function),
+    Data(Data),
 }
 
 #[derive(Debug)]
@@ -58,6 +60,31 @@ pub struct Function {
 }
 
 #[derive(Debug)]
+pub struct Data {
+    pub offset: Box<Expression>,
+    pub data: Vec<DataValues>,
+}
+
+#[derive(Debug)]
+pub enum DataValues {
+    Array {
+        type_: DataType,
+        values: Vec<Expression>,
+    },
+    String(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum DataType {
+    I8,
+    I16,
+    I32,
+    I64,
+    F32,
+    F64,
+}
+
+#[derive(Debug)]
 pub struct MemoryLocation {
     pub span: Span,
     pub size: MemSize,
@@ -70,6 +97,36 @@ pub struct Expression {
     pub type_: Option<Type>,
     pub expr: Expr,
     pub span: Span,
+}
+
+impl Expression {
+    pub fn const_i32(&self) -> i32 {
+        match self.expr {
+            Expr::I32Const(v) => v,
+            _ => panic!("Expected I32Const")
+        }
+    }
+
+    pub fn const_i64(&self) -> i64 {
+        match self.expr {
+            Expr::I64Const(v) => v,
+            _ => panic!("Expected I64Const")
+        }
+    }
+
+    pub fn const_f32(&self) -> f32 {
+        match self.expr {
+            Expr::F32Const(v) => v,
+            _ => panic!("Expected F32Const")
+        }
+    }
+
+    pub fn const_f64(&self) -> f64 {
+        match self.expr {
+            Expr::F64Const(v) => v,
+            _ => panic!("Expected F64Const")
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -87,7 +144,7 @@ pub enum Expr {
         name: String,
         type_: Option<Type>,
         value: Option<Box<Expression>>,
-        defer: bool,
+        let_type: LetType,
     },
     Poke {
         mem_location: MemoryLocation,
@@ -143,7 +200,7 @@ pub enum Expr {
     },
     First {
         value: Box<Expression>,
-        drop: Box<Expression>
+        drop: Box<Expression>,
     },
     Error,
 }
@@ -156,6 +213,13 @@ impl Expr {
             span: span,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LetType {
+    Normal,
+    Lazy,
+    Inline,
 }
 
 #[derive(Debug, Clone, Copy)]

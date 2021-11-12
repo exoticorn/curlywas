@@ -4,9 +4,9 @@ import "env.atan2" fn atan2(f32, f32) -> f32;
 export fn tic(time: i32) {
     let i: i32;
     loop screen {
-        let defer t = time as f32 / 10 as f32;
-        let defer x = (i % 320) as f32 - 160.1;
-        let defer y = (i / 320 - 128) as f32;
+        let lazy t = time as f32 / 10 as f32;
+        let lazy x = (i % 320) as f32 - 160.1;
+        let lazy y = (i / 320 - 128) as f32;
 
         i?120 = ((20000 as f32 / sqrt(x * x + y * y) + t) as i32 ^ (atan2(x, y) * 512 as f32 / 3.141 + t) as i32);
         branch_if (i := i + 1) < 320*256: screen

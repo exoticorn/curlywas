@@ -25,22 +25,22 @@ fn set_color(color: i32) -> i32 {
 export fn update() {
     let y: i32;
     let score = pz;
-    let defer pad = ?22;
-    let defer zero = 0.0;
+    let lazy pad = ?22;
+    let lazy zero = 0.0;
 
-    let defer control_speed = 0.03;
+    let lazy control_speed = 0.03;
     s = s + 0.1 - (f + control_speed) * (pad & 1) as f32;
     f = f * 0.7;
 
     loop lines {
         ?(8003-y) = (score := score / 10) % 10 + 48;
-        let defer z = (4000 / (y := y + 1) + pz) / 20;
-        let defer x = (rng(rng(rng(rng(z)))) >> 30) as f32 - px;
-        let defer w = 9 as f32 / sqrt(z as f32);
-        let defer rx = 80 + (y as f32 * x) as i32;
-        let defer rw = (y as f32 * w) as i32;
+        let lazy z = (4000 / (y := y + 1) + pz) / 20;
+        let lazy x = (rng(rng(rng(rng(z)))) >> 30) as f32 - px;
+        let lazy w = 9 as f32 / sqrt(z as f32);
+        let lazy rx = 80 + (y as f32 * x) as i32;
+        let lazy rw = (y as f32 * w) as i32;
         
-        let defer c = ((z & 1) + 2) * 17;
+        let lazy c = ((z & 1) + 2) * 17;
         rect(rx, y, rw, y / set_color(c + 17));
 
         text(8000, set_color(c) <| rect(rx, y, rw, 1), set_color(4));
@@ -61,7 +61,7 @@ export fn update() {
         branch_if y < 160: lines;
     }
 
-    let defer sy = 114 - 11 + py as i32;
+    let lazy sy = 114 - 11 + py as i32;
     oval(80 - 6, sy + 5, (set_color(50) <| oval(80 - 11, sy, 22, 22)), set_color(17));
 
     px = px + (!(pad & 16) - !(pad & 32)) as f32 * control_speed;

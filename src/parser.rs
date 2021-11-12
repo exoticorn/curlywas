@@ -16,12 +16,14 @@ enum Token {
     Loop,
     Branch,
     BranchIf,
-    Defer,
+    Lazy,
+    Inline,
     As,
     Select,
     If,
     Else,
     Return,
+    Data,
     Ident(String),
     Str(String),
     Int(i32),
@@ -45,12 +47,14 @@ impl fmt::Display for Token {
             Token::Loop => write!(f, "loop"),
             Token::Branch => write!(f, "branch"),
             Token::BranchIf => write!(f, "branch_if"),
-            Token::Defer => write!(f, "defer"),
+            Token::Lazy => write!(f, "lazy"),
+            Token::Inline => write!(f, "inline"),
             Token::As => write!(f, "as"),
             Token::Select => write!(f, "select"),
             Token::If => write!(f, "if"),
             Token::Else => write!(f, "else"),
             Token::Return => write!(f, "return"),
+            Token::Data => write!(f, "data"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
@@ -179,12 +183,26 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .collect::<String>()
         .map(Token::Float);
 
-    // TODO: support hex numbers
-    let int64 = text::int(10)
-        .then_ignore(seq::<_, _, Simple<char>>("i64".chars()))
-        .map(|s: String| Token::Int64(s.parse::<u64>().unwrap() as i64));
+    let integer = seq::<_, _, Simple<char>>("0x".chars())
+        .ignore_then(text::int(16))
+        .try_map(|n, span| {
+            u64::from_str_radix(&n, 16).map_err(|err| Simple::custom(span, err.to_string()))
+        })
+        .or(text::int(10).try_map(|n: String, span: Span| {
+            u64::from_str_radix(&n, 10).map_err(|err| Simple::custom(span, err.to_string()))
+        }))
+        .boxed();
 
-    let int = text::int(10).map(|s: String| Token::Int(s.parse::<u32>().unwrap() as i32));
+    let int64 = integer
+        .clone()
+        .then_ignore(seq::<_, _, Simple<char>>("i64".chars()))
+        .map(|n| Token::Int64(n as i64));
+
+    let int = integer.try_map(|n, span| {
+        u32::try_from(n)
+            .map(|n| Token::Int(n as i32))
+            .map_err(|err| Simple::custom(span, err.to_string()))
+    });
 
     let str_ = just('"')
         .ignore_then(filter(|c| *c != '"').repeated())
@@ -221,12 +239,14 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "loop" => Token::Loop,
         "branch" => Token::Branch,
         "branch_if" => Token::BranchIf,
-        "defer" => Token::Defer,
+        "lazy" => Token::Lazy,
+        "inline" => Token::Inline,
         "as" => Token::As,
         "select" => Token::Select,
         "if" => Token::If,
         "else" => Token::Else,
         "return" => Token::Return,
+        "data" => Token::Data,
         _ => Token::Ident(ident),
     });
 
@@ -364,7 +384,12 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .boxed();
 
             let let_ = just(Token::Let)
-                .ignore_then(just(Token::Defer).or_not())
+                .ignore_then(
+                    (just(Token::Lazy)
+                        .to(ast::LetType::Lazy)
+                        .or(just(Token::Inline).to(ast::LetType::Inline)))
+                    .or_not(),
+                )
                 .then(identifier.clone())
                 .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
                 .then(
@@ -372,11 +397,11 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .ignore_then(expression.clone())
                         .or_not(),
                 )
-                .map(|(((defer, name), type_), value)| ast::Expr::Let {
+                .map(|(((let_type, name), type_), value)| ast::Expr::Let {
                     name,
                     type_,
                     value: value.map(Box::new),
-                    defer: defer.is_some(),
+                    let_type: let_type.unwrap_or(ast::LetType::Normal),
                 })
                 .boxed();
 
@@ -545,7 +570,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     } else {
                         make_memory_op(left, vec![(size, right)], None)
                     }
-                });
+                }).clone();
 
             let memory_op = op_cast
                 .clone()
@@ -681,12 +706,22 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 })
                 .boxed();
 
-            let op_first = op_bit.clone().then(
-                just(Token::Op("<|".to_string())).ignore_then(op_bit).repeated()
-            ).foldl(|left, right| {
-                let span = left.span.start..right.span.end;
-                ast::Expr::First { value: Box::new(left), drop: Box::new(right) }.with_span(span)
-            }).boxed();
+            let op_first = op_bit
+                .clone()
+                .then(
+                    just(Token::Op("<|".to_string()))
+                        .ignore_then(op_bit)
+                        .repeated(),
+                )
+                .foldl(|left, right| {
+                    let span = left.span.start..right.span.end;
+                    ast::Expr::First {
+                        value: Box::new(left),
+                        drop: Box::new(right),
+                    }
+                    .with_span(span)
+                })
+                .boxed();
 
             op_first
         });
@@ -707,14 +742,18 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     final_expression: final_expression.map(|e| Box::new(e)),
                 }
                 .with_span(span)
-            })
+            }).boxed()
     });
 
     let expression = expression_out.unwrap();
 
     let top_level_item = {
         let import_memory = just(Token::Memory)
-            .ignore_then(integer.delimited_by(Token::Ctrl('('), Token::Ctrl(')')))
+            .ignore_then(
+                integer
+                    .clone()
+                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+            )
             .map(|min_size| ast::ImportType::Memory(min_size as u32))
             .boxed();
 
@@ -750,7 +789,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .boxed();
 
         let import = just(Token::Import)
-            .ignore_then(string)
+            .ignore_then(string.clone())
             .then(import_memory.or(import_global).or(import_function))
             .then_ignore(just(Token::Ctrl(';')))
             .map_with_span(|(import, type_), span| {
@@ -813,9 +852,41 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     mutable: mutable.is_some(),
                     span,
                 })
-            });
+            }).boxed();
 
-        import.or(function).or(global).boxed()
+        let data_i8 = just(Token::Ident("i8".to_string()))
+            .to(ast::DataType::I8)
+            .or(just(Token::Ident("i16".to_string())).to(ast::DataType::I16))
+            .or(just(Token::Ident("i32".to_string())).to(ast::DataType::I32))
+            .or(just(Token::Ident("i64".to_string())).to(ast::DataType::I64))
+            .or(just(Token::Ident("f32".to_string())).to(ast::DataType::F32))
+            .or(just(Token::Ident("f64".to_string())).to(ast::DataType::F64))
+            .then(
+                expression.clone()
+                    .separated_by(just(Token::Ctrl(',')))
+                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+            )
+            .map(|(type_, values)| ast::DataValues::Array { type_, values });
+
+        let data_string = string.map(|s| ast::DataValues::String(s));
+
+        let data = just(Token::Data)
+            .ignore_then(expression.clone())
+            .then(
+                data_i8
+                    .or(data_string)
+                    .repeated()
+                    .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
+            )
+            .map(|(offset, data)| {
+                ast::TopLevelItem::Data(ast::Data {
+                    offset: Box::new(offset),
+                    data,
+                })
+            })
+            .boxed();
+
+        import.or(function).or(global).or(data).boxed()
     };
 
     top_level_item.repeated().then_ignore(end()).map(|items| {
@@ -823,12 +894,14 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             imports: Vec::new(),
             global_vars: Vec::new(),
             functions: Vec::new(),
+            data: Vec::new(),
         };
         for item in items {
             match item {
                 ast::TopLevelItem::Import(i) => script.imports.push(i),
                 ast::TopLevelItem::GlobalVar(v) => script.global_vars.push(v),
                 ast::TopLevelItem::Function(f) => script.functions.push(f),
+                ast::TopLevelItem::Data(d) => script.data.push(d),
             }
         }
         script

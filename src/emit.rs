@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use wasm_encoder::{
-    BlockType, CodeSection, EntityType, Export, ExportSection, Function, FunctionSection,
-    GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection,
-    ValType,
+    BlockType, CodeSection, DataSection, EntityType, Export, ExportSection, Function,
+    FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemoryType,
+    Module, TypeSection, ValType,
 };
 
 use crate::{ast, intrinsics::Intrinsics};
@@ -121,6 +121,60 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         module.section(&code);
     }
 
+    if !script.data.is_empty() {
+        let mut data_section = DataSection::new();
+
+        for data in &script.data {
+            let mut segment_data: Vec<u8> = vec![];
+            for values in &data.data {
+                match values {
+                    ast::DataValues::Array { type_, values } => {
+                        let width = match *type_ {
+                            ast::DataType::I8 => 1,
+                            ast::DataType::I16 => 2,
+                            ast::DataType::I32 => 4,
+                            ast::DataType::I64 => 8,
+                            ast::DataType::F32 => 4,
+                            ast::DataType::F64 => 8,
+                        };
+                        while segment_data.len() % width != 0 {
+                            segment_data.push(0);
+                        }
+                        for value in values {
+                            match *type_ {
+                                ast::DataType::I8 => segment_data.push(value.const_i32() as u8),
+                                ast::DataType::I16 => segment_data
+                                    .extend_from_slice(&(value.const_i32() as u16).to_le_bytes()),
+                                ast::DataType::I32 => segment_data
+                                    .extend_from_slice(&(value.const_i32() as u32).to_le_bytes()),
+                                ast::DataType::I64 => segment_data
+                                    .extend_from_slice(&(value.const_i64() as u64).to_le_bytes()),
+                                ast::DataType::F32 => {
+                                    segment_data.extend_from_slice(&value.const_f32().to_le_bytes())
+                                }
+                                ast::DataType::F64 => {
+                                    segment_data.extend_from_slice(&value.const_f64().to_le_bytes())
+                                }
+                            }
+                        }
+                    }
+                    ast::DataValues::String(s) => {
+                        for c in s.chars() {
+                            segment_data.push(c as u8);
+                        }
+                    }
+                }
+            }
+            data_section.active(
+                0,
+                &wasm_encoder::Instruction::I32Const(data.offset.const_i32()),
+                segment_data,
+            );
+        }
+
+        module.section(&data_section);
+    }
+
     module.finish()
 }
 
@@ -172,7 +226,7 @@ struct FunctionContext<'a> {
     functions: &'a HashMap<String, u32>,
     locals: &'a HashMap<String, u32>,
     labels: Vec<String>,
-    deferred_inits: HashMap<&'a str, &'a ast::Expression>,
+    let_values: HashMap<&'a str, (&'a ast::Expression, ast::LetType)>,
     intrinsics: &'a Intrinsics,
 }
 
@@ -204,7 +258,7 @@ fn emit_function(
         functions,
         locals: &local_map,
         labels: vec![],
-        deferred_inits: HashMap::new(),
+        let_values: HashMap::new(),
         intrinsics,
     };
 
@@ -336,15 +390,21 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             }
         }
         ast::Expr::Let {
-            value, name, defer, ..
+            value,
+            name,
+            let_type,
+            ..
         } => {
-            if let Some(ref val) = value {
-                if *defer {
-                    ctx.deferred_inits.insert(name, val);
-                } else {
-                    emit_expression(ctx, val);
-                    ctx.function
-                        .instruction(&Instruction::LocalSet(*ctx.locals.get(name).unwrap()));
+            if let Some(ref value) = value {
+                match let_type {
+                    ast::LetType::Normal => {
+                        emit_expression(ctx, value);
+                        ctx.function
+                            .instruction(&Instruction::LocalSet(*ctx.locals.get(name).unwrap()));
+                    }
+                    ast::LetType::Lazy | ast::LetType::Inline => {
+                        ctx.let_values.insert(name, (value, *let_type));
+                    }
                 }
             }
         }
@@ -552,9 +612,19 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         }
         ast::Expr::Variable(name) => {
             if let Some(index) = ctx.locals.get(name) {
-                if let Some(expr) = ctx.deferred_inits.remove(name.as_str()) {
-                    emit_expression(ctx, expr);
-                    ctx.function.instruction(&Instruction::LocalTee(*index));
+                if let Some((expr, let_type)) = ctx.let_values.get(name.as_str()) {
+                    match let_type {
+                        ast::LetType::Lazy => {
+                            let expr = ctx.let_values.remove(name.as_str()).unwrap().0;
+                            emit_expression(ctx, expr);
+                            ctx.function.instruction(&Instruction::LocalTee(*index));
+                        }
+                        ast::LetType::Inline => {
+                            let expr = *expr;
+                            emit_expression(ctx, expr);
+                        }
+                        _ => unreachable!(),
+                    }
                 } else {
                     ctx.function.instruction(&Instruction::LocalGet(*index));
                 }

@@ -8,6 +8,20 @@ pub fn fold_script(script: &mut ast::Script) {
     for func in &mut script.functions {
         fold_expr(&mut func.body);
     }
+
+    for data in &mut script.data {
+        fold_expr(&mut data.offset);
+        for values in &mut data.data {
+            match values {
+                ast::DataValues::Array { values, .. } => {
+                    for value in values {
+                        fold_expr(value);
+                    }
+                }
+                ast::DataValues::String(_) => (),
+            }
+        }
+    }
 }
 
 fn fold_mem_location(mem_location: &mut ast::MemoryLocation) {

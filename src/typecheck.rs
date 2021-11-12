@@ -150,6 +150,46 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
         }
     }
 
+    for data in &mut script.data {
+        tc_const(&mut data.offset, source)?;
+        if data.offset.type_ != Some(I32) {
+            result = type_mismatch(
+                Some(I32),
+                &data.offset.span,
+                data.offset.type_,
+                &data.offset.span,
+                source,
+            );
+        }
+        for values in &mut data.data {
+            match values {
+                ast::DataValues::Array { type_, values } => {
+                    let needed_type = match type_ {
+                        ast::DataType::I8 | ast::DataType::I16 | ast::DataType::I32 => {
+                            ast::Type::I32
+                        }
+                        ast::DataType::I64 => ast::Type::I64,
+                        ast::DataType::F32 => ast::Type::F32,
+                        ast::DataType::F64 => ast::Type::F64,
+                    };
+                    for value in values {
+                        tc_const(value, source)?;
+                        if value.type_ != Some(needed_type) {
+                            result = type_mismatch(
+                                Some(needed_type),
+                                &value.span,
+                                value.type_,
+                                &value.span,
+                                source,
+                            );
+                        }
+                    }
+                }
+                ast::DataValues::String(_) => (),
+            }
+        }
+    }
+
     result
 }
 

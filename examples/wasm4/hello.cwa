@@ -1,0 +1,10 @@
+import "env.memory" memory(1);
+import "env.text" fn text(i32, i32, i32);
+
+export fn update() {
+    text(0x3f, 8, 8);
+}
+
+data 0x3f {
+    "Hello, World!"
+}
