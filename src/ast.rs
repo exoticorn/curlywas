@@ -53,6 +53,7 @@ pub struct GlobalVar {
 pub struct Function {
     pub span: Span,
     pub export: bool,
+    pub start: bool,
     pub name: String,
     pub params: Vec<(String, Type)>,
     pub type_: Option<Type>,

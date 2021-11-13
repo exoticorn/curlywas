@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use wasm_encoder::{
     BlockType, CodeSection, DataSection, EntityType, Export, ExportSection, Function,
     FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemoryType,
-    Module, TypeSection, ValType,
+    Module, StartSection, TypeSection, ValType,
 };
 
 use crate::{ast, intrinsics::Intrinsics};
@@ -94,9 +94,14 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         let mut exports = ExportSection::new();
         let mut code = CodeSection::new();
 
+        let mut start_index = None;
+
         let intrinsics = Intrinsics::new();
 
         for func in script.functions.iter() {
+            if func.start {
+                start_index = Some(function_map.len() as u32);
+            }
             function_map.insert(func.name.clone(), function_map.len() as u32);
         }
 
@@ -118,6 +123,11 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
             module.section(&global_section);
         }
         module.section(&exports);
+
+        if let Some(function_index) = start_index {
+            module.section(&StartSection { function_index });
+        }
+
         module.section(&code);
     }
 
@@ -611,9 +621,10 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             ctx.labels.pop();
             ctx.function.instruction(&Instruction::End);
         }
-        ast::Expr::LabelBlock {label, block } => {
+        ast::Expr::LabelBlock { label, block } => {
             ctx.labels.push(label.to_string());
-            ctx.function.instruction(&Instruction::Block(map_block_type(block.type_)));
+            ctx.function
+                .instruction(&Instruction::Block(map_block_type(block.type_)));
             emit_expression(ctx, block);
             ctx.labels.pop();
             ctx.function.instruction(&Instruction::End);

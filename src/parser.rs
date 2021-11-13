@@ -6,11 +6,8 @@ use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Token {
-    Import,
-    Export,
     Fn,
     Let,
-    Memory,
     Global,
     Mut,
     Loop,
@@ -24,7 +21,6 @@ enum Token {
     If,
     Else,
     Return,
-    Data,
     Ident(String),
     Str(String),
     Int(i32),
@@ -38,11 +34,8 @@ enum Token {
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Token::Import => write!(f, "import"),
-            Token::Export => write!(f, "export"),
             Token::Fn => write!(f, "fn"),
             Token::Let => write!(f, "let"),
-            Token::Memory => write!(f, "memory"),
             Token::Global => write!(f, "global"),
             Token::Mut => write!(f, "mut"),
             Token::Loop => write!(f, "loop"),
@@ -56,7 +49,6 @@ impl fmt::Display for Token {
             Token::If => write!(f, "if"),
             Token::Else => write!(f, "else"),
             Token::Return => write!(f, "return"),
-            Token::Data => write!(f, "data"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
@@ -231,11 +223,8 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     }
 
     let ident = ident().map(|ident: String| match ident.as_str() {
-        "import" => Token::Import,
-        "export" => Token::Export,
         "fn" => Token::Fn,
         "let" => Token::Let,
-        "memory" => Token::Memory,
         "global" => Token::Global,
         "mut" => Token::Mut,
         "loop" => Token::Loop,
@@ -249,7 +238,6 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "if" => Token::If,
         "else" => Token::Else,
         "return" => Token::Return,
-        "data" => Token::Data,
         _ => Token::Ident(ident),
     });
 
@@ -755,7 +743,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
     let expression = expression_out.unwrap();
 
     let top_level_item = {
-        let import_memory = just(Token::Memory)
+        let import_memory = just(Token::Ident("memory".to_string()))
             .ignore_then(
                 integer
                     .clone()
@@ -795,7 +783,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             })
             .boxed();
 
-        let import = just(Token::Import)
+        let import = just(Token::Ident("import".to_string()))
             .ignore_then(string.clone())
             .then(import_memory.or(import_global).or(import_function))
             .then_ignore(just(Token::Ctrl(';')))
@@ -814,8 +802,9 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .then(type_parser())
             .boxed();
 
-        let function = just(Token::Export)
+        let function = just(Token::Ident("export".to_string()))
             .or_not()
+            .then(just(Token::Ident("start".to_string())).or_not())
             .then_ignore(just(Token::Fn))
             .then(identifier.clone())
             .then(
@@ -829,11 +818,12 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     .or_not(),
             )
             .then(block.clone())
-            .map_with_span(|((((export, name), params), type_), body), span| {
+            .map_with_span(|(((((export, start), name), params), type_), body), span| {
                 ast::TopLevelItem::Function(ast::Function {
                     span,
                     params,
                     export: export.is_some(),
+                    start: start.is_some(),
                     name,
                     type_,
                     body,
@@ -875,7 +865,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
         let data_string = string.map(|s| ast::DataValues::String(s));
 
-        let data = just(Token::Data)
+        let data = just(Token::Ident("data".to_string()))
             .ignore_then(expression.clone())
             .then(
                 data_i8

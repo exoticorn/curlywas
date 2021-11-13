@@ -150,6 +150,36 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
         }
     }
 
+    let mut start_function: Option<&ast::Function> = None;
+    for f in &script.functions {
+        if f.start {
+            if !f.params.is_empty() || f.type_.is_some() {
+                Report::build(ReportKind::Error, (), f.span.start)
+                    .with_message("Start function can't have params or a return value")
+                    .with_label(
+                        Label::new(f.span.clone())
+                            .with_message("Start function can't have params or a return value")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+                    .eprint(Source::from(source))
+                    .unwrap();
+
+                result = Err(());
+            }
+            if let Some(prev) = start_function {
+                result = report_duplicate_definition(
+                    "Start function already defined",
+                    &f.span,
+                    &prev.span,
+                    source,
+                );
+            } else {
+                start_function = Some(f);
+            }
+        }
+    }
+
     for data in &mut script.data {
         tc_const(&mut data.offset, source)?;
         if data.offset.type_ != Some(I32) {

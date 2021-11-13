@@ -5,7 +5,7 @@ import "env.sin" fn sin(f32) -> f32;
 import "env.cls" fn cls(i32);
 
 export fn tic(time: i32) {
-    cls(0);
+    cls(32);
     let i: i32;
     loop outer {
         let lazy fi = i as f32 / 4 as f32;
