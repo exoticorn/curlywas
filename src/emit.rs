@@ -316,6 +316,7 @@ fn collect_locals_expr<'a>(expr: &ast::Expression, locals: &mut Vec<(String, ast
         ast::Expr::Assign { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::LocalTee { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::Loop { block, .. } => collect_locals_expr(block, locals),
+        ast::Expr::LabelBlock { block, .. } => collect_locals_expr(block, locals),
         ast::Expr::Cast { value, .. } => collect_locals_expr(value, locals),
         ast::Expr::FuncCall { params, .. } => {
             for param in params {
@@ -606,6 +607,13 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             ctx.labels.push(label.to_string());
             ctx.function
                 .instruction(&Instruction::Loop(map_block_type(block.type_)));
+            emit_expression(ctx, block);
+            ctx.labels.pop();
+            ctx.function.instruction(&Instruction::End);
+        }
+        ast::Expr::LabelBlock {label, block } => {
+            ctx.labels.push(label.to_string());
+            ctx.function.instruction(&Instruction::Block(map_block_type(block.type_)));
             emit_expression(ctx, block);
             ctx.labels.pop();
             ctx.function.instruction(&Instruction::End);

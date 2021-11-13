@@ -14,6 +14,7 @@ enum Token {
     Global,
     Mut,
     Loop,
+    Block,
     Branch,
     BranchIf,
     Lazy,
@@ -45,6 +46,7 @@ impl fmt::Display for Token {
             Token::Global => write!(f, "global"),
             Token::Mut => write!(f, "mut"),
             Token::Loop => write!(f, "loop"),
+            Token::Block => write!(f, "block"),
             Token::Branch => write!(f, "branch"),
             Token::BranchIf => write!(f, "branch_if"),
             Token::Lazy => write!(f, "lazy"),
@@ -237,6 +239,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         "global" => Token::Global,
         "mut" => Token::Mut,
         "loop" => Token::Loop,
+        "block" => Token::Block,
         "branch" => Token::Branch,
         "branch_if" => Token::BranchIf,
         "lazy" => Token::Lazy,
@@ -333,39 +336,31 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
             let loop_expr = just(Token::Loop)
                 .ignore_then(identifier)
-                .then(
-                    block
-                        .clone()
-                        .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
-                )
+                .then(block.clone())
                 .map(|(label, block)| ast::Expr::Loop {
+                    label,
+                    block: Box::new(block),
+                });
+
+            let label_block_expr = just(Token::Block)
+                .ignore_then(identifier)
+                .then(block.clone())
+                .map(|(label, block)| ast::Expr::LabelBlock {
                     label,
                     block: Box::new(block),
                 });
 
             let if_expr = just(Token::If)
                 .ignore_then(expression.clone())
-                .then(
-                    block
-                        .clone()
-                        .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
-                )
-                .then(
-                    just(Token::Else)
-                        .ignore_then(
-                            block
-                                .clone()
-                                .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
-                        )
-                        .or_not(),
-                )
+                .then(block.clone())
+                .then(just(Token::Else).ignore_then(block.clone()).or_not())
                 .map(|((condition, if_true), if_false)| ast::Expr::If {
                     condition: Box::new(condition),
                     if_true: Box::new(if_true),
                     if_false: if_false.map(Box::new),
                 });
 
-            let block_expr = loop_expr.or(if_expr).boxed();
+            let block_expr = loop_expr.or(label_block_expr).or(if_expr).boxed();
 
             block_expression = Some(block_expr.clone());
 
@@ -475,6 +470,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .or(expression
                     .clone()
                     .delimited_by(Token::Ctrl('('), Token::Ctrl(')')))
+                .or(block)
                 .recover_with(nested_delimiters(
                     Token::Ctrl('('),
                     Token::Ctrl(')'),
@@ -570,7 +566,8 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     } else {
                         make_memory_op(left, vec![(size, right)], None)
                     }
-                }).clone();
+                })
+                .clone();
 
             let memory_op = op_cast
                 .clone()
@@ -732,17 +729,27 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
         expression
             .clone()
-            .then_ignore(just(Token::Ctrl(';')))
-            .or(block_expression.map_with_span(|expr, span| expr.with_span(span)))
+            .then(just(Token::Ctrl(';')).to(false))
+            .or(block_expression.map_with_span(|expr, span| (expr.with_span(span), true)))
             .repeated()
             .then(expression.clone().or_not())
-            .map_with_span(|(statements, final_expression), span| {
+            .map_with_span(|(mut statements, mut final_expression), span| {
+                if final_expression.is_none()
+                    && statements
+                        .last()
+                        .map(|(_, block_expr)| *block_expr)
+                        .unwrap_or(false)
+                {
+                    final_expression = statements.pop().map(|(expr, _)| expr);
+                }
                 ast::Expr::Block {
-                    statements,
+                    statements: statements.into_iter().map(|(expr, _)| expr).collect(),
                     final_expression: final_expression.map(|e| Box::new(e)),
                 }
                 .with_span(span)
-            }).boxed()
+            })
+            .delimited_by(Token::Ctrl('{'), Token::Ctrl('}'))
+            .boxed()
     });
 
     let expression = expression_out.unwrap();
@@ -821,11 +828,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     .ignore_then(type_parser())
                     .or_not(),
             )
-            .then(
-                block
-                    .clone()
-                    .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
-            )
+            .then(block.clone())
             .map_with_span(|((((export, name), params), type_), body), span| {
                 ast::TopLevelItem::Function(ast::Function {
                     span,
@@ -852,7 +855,8 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     mutable: mutable.is_some(),
                     span,
                 })
-            }).boxed();
+            })
+            .boxed();
 
         let data_i8 = just(Token::Ident("i8".to_string()))
             .to(ast::DataType::I8)
@@ -862,7 +866,8 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .or(just(Token::Ident("f32".to_string())).to(ast::DataType::F32))
             .or(just(Token::Ident("f64".to_string())).to(ast::DataType::F64))
             .then(
-                expression.clone()
+                expression
+                    .clone()
                     .separated_by(just(Token::Ctrl(',')))
                     .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
             )

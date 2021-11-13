@@ -155,6 +155,10 @@ pub enum Expr {
         label: String,
         block: Box<Expression>,
     },
+    LabelBlock {
+        label: String,
+        block: Box<Expression>,
+    },
     Branch(String),
     BranchIf {
         condition: Box<Expression>,

@@ -242,6 +242,7 @@ fn fold_expr(expr: &mut ast::Expression) {
         ast::Expr::Assign { ref mut value, .. } => fold_expr(value),
         ast::Expr::LocalTee { ref mut value, .. } => fold_expr(value),
         ast::Expr::Loop { ref mut block, .. } => fold_expr(block),
+        ast::Expr::LabelBlock { ref mut block, .. } => fold_expr(block),
         ast::Expr::Branch(_) => (),
         ast::Expr::BranchIf {
             ref mut condition, ..

@@ -577,6 +577,19 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             context.block_stack.pop();
             block.type_
         }
+        ast::Expr::LabelBlock {
+            ref label,
+            ref mut block,
+        } => {
+            context.block_stack.push(label.clone());
+            tc_expression(context, block)?;
+            context.block_stack.pop();
+            if block.type_ != None {
+                // TODO: implement, requires branches to optionally provide values
+                return type_mismatch(None, &expr.span, block.type_, &block.span, context.source);
+            }
+            None
+        }
         ast::Expr::Branch(ref label) => {
             if !context.block_stack.contains(label) {
                 return missing_label(&expr.span, context.source);
