@@ -13,17 +13,25 @@ export fn tic(time: i32) {
     }
 }
 
-fn make_gradient(gamma_r: f32, gamma_g: f32, gamma_b: f32, base: i32) {
-    gamma_r = pow(2 as f32, gamma_r);
-    gamma_g = pow(2 as f32, gamma_g);
-    gamma_b = pow(2 as f32, gamma_b);
+fn fcol(v: f32) -> i32 {
+    let lazy vi = v as i32;
+    select(vi < 0, 0, select(vi > 255, 255, vi))
+}
+
+fn col(f: f32, c: f32) -> i32 {
+    let lazy a = f * (c * -0.8 + 0.6);
+    let lazy b = f * f * 0.7;
+    fcol((a + b - a * b) * 255 as f32)
+}
+
+fn make_gradient(r: f32, g: f32, b: f32, base: i32) {
     let i: i32;
     loop colors {
-        let f = (i as f32 + 0.5) / 17 as f32;
+        let f = (i + 1) as f32 / 16 as f32;
         ((base + i) * 4)!(120+320*240) =
-            (pow(f, gamma_r) * 255.99) as i32 +
-            ((pow(f, gamma_g) * 255.99) as i32 << 8) +
-            ((pow(f, gamma_b) * 255.99) as i32 << 16);
+            col(f, r) +
+            (col(f, g) << 8) +
+            (col(f, b) << 16);
         
         branch_if (i := i + 1) < 16: colors;
     }
@@ -32,7 +40,7 @@ fn make_gradient(gamma_r: f32, gamma_g: f32, gamma_b: f32, base: i32) {
 start fn gen_palette() {
     let i: i32;
     loop hsv {
-        let a = i as f32 * (3.141 / 5.5);
+        let a = i as f32 * (3.141 / 6.0);
         make_gradient(sin(a) * 0.707 - cos(a) * 0.804, cos(a) * 0.816, cos(a) * 0.804 + sin(a) * 0.707, i * 16);
         branch_if (i := i + 1) < 11: hsv;
     }
