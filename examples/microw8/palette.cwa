@@ -1,0 +1,40 @@
+import "env.memory" memory(4);
+
+import "env.pow" fn pow(f32, f32) -> f32;
+import "env.sin" fn sin(f32) -> f32;
+import "env.cos" fn cos(f32) -> f32;
+import "env.rectangle" fn rect(f32, f32, f32, f32, i32);
+
+export fn tic(time: i32) {
+    let i: i32;
+    loop colors {
+        rect((i % 16 * 15) as f32, (i / 16 * 15) as f32, 15 as f32, 15 as f32, i);
+        branch_if (i := i + 1) < 256: colors
+    }
+}
+
+fn make_gradient(gamma_r: f32, gamma_g: f32, gamma_b: f32, base: i32) {
+    gamma_r = pow(2 as f32, gamma_r);
+    gamma_g = pow(2 as f32, gamma_g);
+    gamma_b = pow(2 as f32, gamma_b);
+    let i: i32;
+    loop colors {
+        let f = (i as f32 + 0.5) / 17 as f32;
+        ((base + i) * 4)!(120+320*240) =
+            (pow(f, gamma_r) * 255.99) as i32 +
+            ((pow(f, gamma_g) * 255.99) as i32 << 8) +
+            ((pow(f, gamma_b) * 255.99) as i32 << 16);
+        
+        branch_if (i := i + 1) < 16: colors;
+    }
+}
+
+start fn gen_palette() {
+    let i: i32;
+    loop hsv {
+        let a = i as f32 * (3.141 / 5.5);
+        make_gradient(sin(a) * 0.707 - cos(a) * 0.804, cos(a) * 0.816, cos(a) * 0.804 + sin(a) * 0.707, i * 16);
+        branch_if (i := i + 1) < 11: hsv;
+    }
+    make_gradient(0 as f32, 0 as f32, 0 as f32, 11*16);
+}
