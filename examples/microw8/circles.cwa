@@ -12,7 +12,7 @@ export fn tic(time: i32) {
         let lazy t = time as f32 / 5000 as f32;
         circle(
             (sin(fi / 2 as f32 + t * 5 as f32) + 1 as f32) * 160 as f32,
-            (sin(fi / 3 as f32 + t * 4 as f32) + 1 as f32) * 128 as f32,
+            (sin(fi / 3 as f32 + t * 4 as f32) + 1 as f32) * 120 as f32,
             (sin(t * 17 as f32 + fi * 2 as f32) + 2 as f32) * 16 as f32, i * 2 + 63);
    
         branch_if (i := i + 1) < 63: outer

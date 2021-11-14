@@ -4,6 +4,6 @@ export fn tic(time: i32) {
   let i: i32;
   loop frame {
     i?120 = (i % 320 + time / 10) ^ (i / 320);
-    branch_if (i := i + 1) < 320*256: frame;
+    branch_if (i := i + 1) < 320*240: frame;
   }
 }

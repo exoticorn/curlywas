@@ -5,7 +5,7 @@ export fn tic(time: i32) {
   let lazy t = time as f32 / 1000 as f32;
   loop pixels {
     let lazy x = (i % 320 - 160) as f32;
-    let lazy y = (i / 320) as f32 - 128.5;
+    let lazy y = (i / 320) as f32 - 120.5;
     let lazy z = t + 20 as f32 / sqrt(x*x + y*y);
     let lazy z_int = z as i32;
     let lazy q = select(z_int % 9 >= 6, z, (z_int - z_int % 9 + 6) as f32);
@@ -20,6 +20,6 @@ export fn tic(time: i32) {
                 12 + (y / 23 as f32) as i32
               )
             ) * 16;
-    branch_if (i := i + 1) < 320*256: pixels;
+    branch_if (i := i + 1) < 320*240: pixels;
   }
 }
