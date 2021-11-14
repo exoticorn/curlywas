@@ -3,7 +3,23 @@ import "env.memory" memory(4);
 import "env.pow" fn pow(f32, f32) -> f32;
 import "env.sin" fn sin(f32) -> f32;
 import "env.cos" fn cos(f32) -> f32;
+import "env.atan2" fn atan2(f32, f32) -> f32;
 import "env.rectangle" fn rect(f32, f32, f32, f32, i32);
+
+//export fn tic(time: i32) {
+//    let i: i32;
+//    loop pixels {
+//        let lazy x = (i % 320) as f32 - 160.5;
+//        let lazy y = (i / 320 - 120) as f32;
+//
+//        let lazy dist = 4000 as f32 / sqrt(x*x + y*y + 10 as f32);
+//        let lazy angle = atan2(x, y) * (64.0 / 3.141);
+//
+//        i?120 = ((((dist + time as f32 / 63 as f32) as i32 ^ angle as i32) #% 32 + 32) >> ((dist as i32 - i % 7 * 3) / 40)) + 192;
+//
+//        branch_if (i := i + 1) < 320*240: pixels;
+//    }
+//}
 
 export fn tic(time: i32) {
     let i: i32;
@@ -13,25 +29,15 @@ export fn tic(time: i32) {
     }
 }
 
-fn fcol(v: f32) -> i32 {
-    let lazy vi = v as i32;
-    select(vi < 0, 0, select(vi > 255, 255, vi))
-}
-
-fn col(f: f32, c: f32) -> i32 {
-    let lazy a = f * (c * -0.8 + 0.6);
-    let lazy b = f * f * 0.7;
-    fcol((a + b - a * b) * 255 as f32)
-}
-
-fn make_gradient(r: f32, g: f32, b: f32, base: i32) -> i32 {
+fn make_gradient(c: f32, base: i32) -> i32 {
     let i: i32;
     loop colors {
-        let f = (i + 4) as f32 / 64 as f32;
-        (base + i)!(120+320*240) =
-            col(f, r) +
-            (col(f, g) << 8) +
-            (col(f, b) << 16);
+        let lazy f = (i + 4) as f32 / 64 as f32;
+        let lazy a = f * (c * -0.8 + 0.6);
+        let lazy b = f * f * 0.7;
+        let lazy v = ((a + b - a * b) * 255 as f32) as i32;
+        
+        (base + i)?(120+320*240) = select(v < 0, 0, select(v > 255, 255, v));
         
         branch_if (i := i + 4) < 64: colors;
     }
@@ -42,10 +48,13 @@ start fn gen_palette() {
     let i: i32;
     loop hsv {
         let a = i as f32 * (3.141 / 6.0);
-        make_gradient(sin(a) * 0.707 - cos(a) * 0.804, cos(a) * 0.816, cos(a) * 0.804 + sin(a) * 0.707, i * 64);
+        let inline base2 = make_gradient(sin(a) * 0.707 - cos(a) * 0.804, i * 64);
+        let inline base3 = make_gradient(cos(a) * 0.816, base2);
+        make_gradient(cos(a) * 0.804 + sin(a) * 0.707, base3);
+
         branch_if (i := i + 1) < 11: hsv;
     }
-    make_gradient(0 as f32, 0 as f32, 0 as f32, 11*16*4);
+    make_gradient(0 as f32, make_gradient(0 as f32, make_gradient(0 as f32, 11*16*4)));
 
     i = 255;
     loop expand_sweetie {
