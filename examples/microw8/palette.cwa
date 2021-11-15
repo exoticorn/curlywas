@@ -31,32 +31,18 @@ export fn tic(time: i32) {
     }
 }
 
-fn make_gradient(c: f32, base: i32) -> i32 {
-    let i: i32;
-    loop colors {
-        let lazy f = (i + 4) as f32 / 64 as f32;
-        let lazy a = f * max(0.07, c + 0.5);
-        let lazy b = f * f * 0.6;
-        let lazy v = ((a + b - a * b) * 255 as f32) as i32;
-        
-        (base + i)?(120+320*240) = select(v < 0, 0, select(v > 255, 255, v));
-        
-        branch_if (i := i + 4) < 64: colors;
-    }
-    base + 1
-}
-
 start fn gen_palette() {
     let i: i32;
-    loop hsv {
-        let a = (i as f32 + 0.5) * (3.141 / 6.0);
-        let inline base2 = make_gradient(cos(a) * 0.816, i * 64);
-        let inline base3 = make_gradient(sin(a) * 0.707 - cos(a) * 0.804, base2);
-        make_gradient(sin(a) * -0.707 - cos(a) * 0.804, base3);
+    loop gradients {
+        let inline angle = i as f32 * (3.1416 / 2.0 - 3.1416 / (11.0 * 16.0 * 2.0));
+        let lazy scale = (i % 64) as f32 / 64 as f32;
+        let lazy a = scale * max(0.07, sin(angle) * 0.8 * (i < 11*16*4) as f32 + 0.5);
+        let lazy b = scale * scale * 0.6;
+        let inline v = (min(a + b - a * b, 1 as f32) * 255 as f32) as i32;
+        i?(120+320*240) = v;
 
-        branch_if (i := i + 1) < 11: hsv;
+        branch_if (i := i + 1) < 12*16*4: gradients;
     }
-    make_gradient(0 as f32, make_gradient(0 as f32, make_gradient(0 as f32, 11*16*4)));
 
     i = 255;
     loop expand_sweetie {
