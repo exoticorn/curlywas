@@ -4,6 +4,8 @@ import "env.pow" fn pow(f32, f32) -> f32;
 import "env.sin" fn sin(f32) -> f32;
 import "env.cos" fn cos(f32) -> f32;
 import "env.atan2" fn atan2(f32, f32) -> f32;
+import "env.tan" fn tan(f32) -> f32;
+import "env.atan" fn atan(f32) -> f32;
 import "env.rectangle" fn rect(f32, f32, f32, f32, i32);
 
 //export fn tic(time: i32) {
@@ -33,7 +35,7 @@ fn make_gradient(c: f32, base: i32) -> i32 {
     let i: i32;
     loop colors {
         let lazy f = (i + 4) as f32 / 64 as f32;
-        let lazy a = f * (c * -0.8 + 0.6);
+        let lazy a = f * (tan(c*1.1) * -0.7 + 0.4);
         let lazy b = f * f * 0.7;
         let lazy v = ((a + b - a * b) * 255 as f32) as i32;
         
