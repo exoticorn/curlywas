@@ -36,9 +36,9 @@ start fn gen_palette() {
     loop gradients {
         let lazy scale = ((i := i + 1) % 64) as f32 / 64 as f32;
         let inline angle = i as f32 * (3.1416 / 2.0 - 3.1416 / (11.0 * 16.0 * 2.0));
-        let lazy a = max(0.07, sin(angle) * 0.8 * (i < 11*16*4) as f32 + 0.5) * scale;
+        let lazy a = max(0.07, sin(angle) * 0.8 + 0.5) * scale;
         let lazy b = scale * scale * 0.6;
-        let inline v = (min(a + b - a * b, 1 as f32) * 255 as f32) as i32;
+        let inline v = (select(i < 11*16*4, min(a + b - a * b, 1 as f32), scale) * 255 as f32) as i32;
         i?(120+320*240) = v;
 
         branch_if i < 12*16*4: gradients;
