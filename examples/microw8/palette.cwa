@@ -35,7 +35,7 @@ fn make_gradient(c: f32, base: i32) -> i32 {
     let i: i32;
     loop colors {
         let lazy f = (i + 4) as f32 / 64 as f32;
-        let lazy a = f * max(0 as f32, c + 0.5);
+        let lazy a = f * max(0.07, c + 0.5);
         let lazy b = f * f * 0.6;
         let lazy v = ((a + b - a * b) * 255 as f32) as i32;
         
