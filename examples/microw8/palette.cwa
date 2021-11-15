@@ -35,8 +35,8 @@ fn make_gradient(c: f32, base: i32) -> i32 {
     let i: i32;
     loop colors {
         let lazy f = (i + 4) as f32 / 64 as f32;
-        let lazy a = f * (tan(c*1.1) * -0.7 + 0.4);
-        let lazy b = f * f * 0.7;
+        let lazy a = f * max(0 as f32, c + 0.5);
+        let lazy b = f * f * 0.6;
         let lazy v = ((a + b - a * b) * 255 as f32) as i32;
         
         (base + i)?(120+320*240) = select(v < 0, 0, select(v > 255, 255, v));
@@ -49,10 +49,10 @@ fn make_gradient(c: f32, base: i32) -> i32 {
 start fn gen_palette() {
     let i: i32;
     loop hsv {
-        let a = i as f32 * (3.141 / 6.0);
-        let inline base2 = make_gradient(sin(a) * 0.707 - cos(a) * 0.804, i * 64);
-        let inline base3 = make_gradient(cos(a) * 0.816, base2);
-        make_gradient(cos(a) * 0.804 + sin(a) * 0.707, base3);
+        let a = (i as f32 + 0.5) * (3.141 / 6.0);
+        let inline base2 = make_gradient(cos(a) * 0.816, i * 64);
+        let inline base3 = make_gradient(sin(a) * 0.707 - cos(a) * 0.804, base2);
+        make_gradient(sin(a) * -0.707 - cos(a) * 0.804, base3);
 
         branch_if (i := i + 1) < 11: hsv;
     }
