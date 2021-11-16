@@ -1,15 +1,8 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use std::io::prelude::*;
 use std::{fs::File, path::PathBuf};
 
-mod ast;
-mod constfold;
-mod emit;
-mod parser;
-mod typecheck;
-mod intrinsics;
-
-type Span = std::ops::Range<usize>;
+use curlywas::compile_file;
 
 fn main() -> Result<()> {
     let mut filename = PathBuf::from(
@@ -17,19 +10,8 @@ fn main() -> Result<()> {
             .nth(1)
             .ok_or_else(|| anyhow!("Path to .hw file missing"))?,
     );
-    let mut input = String::new();
-    File::open(&filename)?.read_to_string(&mut input)?;
 
-    let mut script = match parser::parse(&input) {
-        Ok(script) => script,
-        Err(_) => bail!("Parse failed")
-    };
-
-    constfold::fold_script(&mut script);
-    if let Err(_) = typecheck::tc_script(&mut script, &input) {
-        bail!("Type check failed");
-    }
-    let wasm = emit::emit(&script);
+    let wasm = compile_file(&filename)?;
 
     wasmparser::validate(&wasm)?;
 
