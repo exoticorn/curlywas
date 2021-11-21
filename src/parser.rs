@@ -388,16 +388,6 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 })
                 .boxed();
 
-            let tee = identifier
-                .clone()
-                .then_ignore(just(Token::Op(":=".to_string())))
-                .then(expression.clone())
-                .map(|(name, value)| ast::Expr::LocalTee {
-                    name,
-                    value: Box::new(value),
-                })
-                .boxed();
-
             let assign = identifier
                 .clone()
                 .then_ignore(just(Token::Op("=".to_string())))
@@ -443,7 +433,6 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 });
 
             let atom = val
-                .or(tee)
                 .or(function_call)
                 .or(assign)
                 .or(local_tee)
@@ -560,23 +549,31 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             let memory_op = op_cast
                 .clone()
                 .or(short_memory_op.clone())
-                .then(mem_op.clone().repeated().at_least(1))
                 .then(
-                    just(Token::Op("=".to_string()))
-                        .ignore_then(expression.clone())
+                    mem_op
+                        .clone()
+                        .repeated()
+                        .at_least(1)
+                        .then(
+                            just(Token::Op("=".to_string()))
+                                .ignore_then(expression.clone())
+                                .or_not(),
+                        )
                         .or_not(),
                 )
-                .map(|((left, mut peek_ops), poke_op)| {
-                    if let Some(value) = poke_op {
-                        let poke_op = Some((peek_ops.pop().unwrap(), value));
-                        make_memory_op(left, peek_ops, poke_op)
+                .map(|(left, ops)| {
+                    if let Some((mut peek_ops, poke_op)) = ops {
+                        if let Some(value) = poke_op {
+                            let poke_op = Some((peek_ops.pop().unwrap(), value));
+                            make_memory_op(left, peek_ops, poke_op)
+                        } else {
+                            make_memory_op(left, peek_ops, None)
+                        }
                     } else {
-                        make_memory_op(left, peek_ops, None)
+                        left
                     }
                 })
-                .boxed()
-                .or(op_cast.clone())
-                .or(short_memory_op.clone());
+                .boxed();
 
             let op_product = memory_op
                 .clone()
@@ -715,10 +712,11 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
         let block_expression = block_expression.unwrap();
 
-        expression
+        block_expression
             .clone()
-            .then(just(Token::Ctrl(';')).to(false))
-            .or(block_expression.map_with_span(|expr, span| (expr.with_span(span), true)))
+            .then(just(Token::Ctrl(';')).or_not())
+            .map_with_span(|(expr, semi), span| (expr.with_span(span), semi.is_none()))
+            .or(expression.clone().then(just(Token::Ctrl(';')).to(false)))
             .repeated()
             .then(expression.clone().or_not())
             .map_with_span(|(mut statements, mut final_expression), span| {
