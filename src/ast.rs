@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use crate::Span;
 
@@ -73,6 +73,10 @@ pub enum DataValues {
         values: Vec<Expression>,
     },
     String(String),
+    File {
+        path: PathBuf,
+        data: Vec<u8>
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -863,13 +863,25 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             )
             .map(|(type_, values)| ast::DataValues::Array { type_, values });
 
-        let data_string = string.map(|s| ast::DataValues::String(s));
+        let data_string = string.clone().map(|s| ast::DataValues::String(s));
+
+        let data_file = just(Token::Ident("file".to_string()))
+            .ignore_then(
+                string
+                    .clone()
+                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+            )
+            .map(|s| ast::DataValues::File {
+                path: s.into(),
+                data: vec![],
+            });
 
         let data = just(Token::Ident("data".to_string()))
             .ignore_then(expression.clone())
             .then(
                 data_i8
                     .or(data_string)
+                    .or(data_file)
                     .repeated()
                     .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
             )

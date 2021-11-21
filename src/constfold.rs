@@ -18,7 +18,7 @@ pub fn fold_script(script: &mut ast::Script) {
                         fold_expr(value);
                     }
                 }
-                ast::DataValues::String(_) => (),
+                ast::DataValues::String(_) | ast::DataValues::File { .. } => (),
             }
         }
     }

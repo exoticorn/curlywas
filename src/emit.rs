@@ -173,6 +173,9 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
                             segment_data.push(c as u8);
                         }
                     }
+                    ast::DataValues::File { data, .. } => {
+                        segment_data.extend_from_slice(data);
+                    }
                 }
             }
             data_section.active(

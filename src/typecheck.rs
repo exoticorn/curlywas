@@ -215,7 +215,7 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
                         }
                     }
                 }
-                ast::DataValues::String(_) => (),
+                ast::DataValues::String(_) | ast::DataValues::File { .. } => (),
             }
         }
     }
