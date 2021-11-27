@@ -529,26 +529,8 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 }
             }
 
-            let short_memory_op = mem_op
-                .clone()
-                .then(
-                    just(Token::Op("=".to_string()))
-                        .ignore_then(expression.clone())
-                        .or_not(),
-                )
-                .map(|((size, left), value)| {
-                    let right = ast::Expr::I32Const(0).with_span(left.span.clone());
-                    if let Some(value) = value {
-                        make_memory_op(left, vec![], Some(((size, right), value)))
-                    } else {
-                        make_memory_op(left, vec![(size, right)], None)
-                    }
-                })
-                .clone();
-
             let memory_op = op_cast
                 .clone()
-                .or(short_memory_op.clone())
                 .then(
                     mem_op
                         .clone()
