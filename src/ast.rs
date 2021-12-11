@@ -58,6 +58,69 @@ pub struct Function {
     pub params: Vec<(String, Type)>,
     pub type_: Option<Type>,
     pub body: Expression,
+    pub locals: Locals,
+}
+
+#[derive(Debug, Default)]
+pub struct Locals {
+    pub params: Vec<Local>,
+    pub locals: Vec<Local>,
+}
+
+impl Locals {
+    pub fn add_param(&mut self, span: Span, name: String, type_: Type) -> u32 {
+        assert!(self.locals.is_empty());
+        let id = self.params.len() as u32;
+        self.params.push(Local {
+            span,
+            name,
+            type_,
+            index: Some(id),
+        });
+        id
+    }
+
+    pub fn add_local(&mut self, span: Span, name: String, type_: Type, store: bool) -> u32 {
+        let id = (self.params.len() + self.locals.len()) as u32;
+        self.locals.push(Local {
+            span,
+            name,
+            type_,
+            index: store.then(|| id),
+        });
+        id
+    }
+}
+
+impl std::ops::Index<u32> for Locals {
+    type Output = Local;
+    fn index(&self, id: u32) -> &Local {
+        let id = id as usize;
+        if id < self.params.len() {
+            &self.params[id]
+        } else {
+            &self.locals[id - self.params.len()]
+        }
+    }
+}
+
+impl std::ops::IndexMut<u32> for Locals {
+    fn index_mut(&mut self, id: u32) -> &mut Local {
+        let id = id as usize;
+        if id < self.params.len() {
+            &mut self.params[id]
+        } else {
+            &mut self.locals[id - self.params.len()]
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Local {
+    pub span: Span,
+    pub name: String,
+    pub type_: Type,
+    pub index: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -75,8 +138,8 @@ pub enum DataValues {
     String(String),
     File {
         path: PathBuf,
-        data: Vec<u8>
-    }
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -108,28 +171,28 @@ impl Expression {
     pub fn const_i32(&self) -> i32 {
         match self.expr {
             Expr::I32Const(v) => v,
-            _ => panic!("Expected I32Const")
+            _ => panic!("Expected I32Const"),
         }
     }
 
     pub fn const_i64(&self) -> i64 {
         match self.expr {
             Expr::I64Const(v) => v,
-            _ => panic!("Expected I64Const")
+            _ => panic!("Expected I64Const"),
         }
     }
 
     pub fn const_f32(&self) -> f32 {
         match self.expr {
             Expr::F32Const(v) => v,
-            _ => panic!("Expected F32Const")
+            _ => panic!("Expected F32Const"),
         }
     }
 
     pub fn const_f64(&self) -> f64 {
         match self.expr {
             Expr::F64Const(v) => v,
-            _ => panic!("Expected F64Const")
+            _ => panic!("Expected F64Const"),
         }
     }
 }
@@ -144,12 +207,16 @@ pub enum Expr {
     I64Const(i64),
     F32Const(f32),
     F64Const(f64),
-    Variable(String),
+    Variable {
+        name: String,
+        local_id: Option<u32>,
+    },
     Let {
         name: String,
         type_: Option<Type>,
         value: Option<Box<Expression>>,
         let_type: LetType,
+        local_id: Option<u32>,
     },
     Poke {
         mem_location: MemoryLocation,
@@ -181,10 +248,12 @@ pub enum Expr {
     Assign {
         name: String,
         value: Box<Expression>,
+        local_id: Option<u32>,
     },
     LocalTee {
         name: String,
         value: Box<Expression>,
+        local_id: Option<u32>,
     },
     Cast {
         value: Box<Expression>,
@@ -224,7 +293,7 @@ impl Expr {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LetType {
     Normal,
     Lazy,

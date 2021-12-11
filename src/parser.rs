@@ -309,7 +309,10 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .labelled("value");
 
             let variable = filter_map(|span, tok| match tok {
-                Token::Ident(id) => Ok(ast::Expr::Variable(id)),
+                Token::Ident(id) => Ok(ast::Expr::Variable {
+                    name: id,
+                    local_id: None,
+                }),
                 _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
             })
             .labelled("variable");
@@ -319,6 +322,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .map(|(name, expr)| ast::Expr::LocalTee {
                     name,
                     value: Box::new(expr),
+                    local_id: None,
                 })
                 .boxed();
 
@@ -385,6 +389,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     type_,
                     value: value.map(Box::new),
                     let_type: let_type.unwrap_or(ast::LetType::Normal),
+                    local_id: None,
                 })
                 .boxed();
 
@@ -395,6 +400,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .map(|(name, value)| ast::Expr::Assign {
                     name,
                     value: Box::new(value),
+                    local_id: None,
                 })
                 .boxed();
 
@@ -807,6 +813,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     name,
                     type_,
                     body,
+                    locals: ast::Locals::default(),
                 })
             })
             .boxed();

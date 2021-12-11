@@ -20,7 +20,8 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
         source,
         global_vars: HashMap::new(),
         functions: HashMap::new(),
-        local_vars: HashMap::new(),
+        locals: ast::Locals::default(),
+        local_vars: LocalVars::new(),
         block_stack: Vec::new(),
         return_type: None,
         intrinsics: Intrinsics::new(),
@@ -122,28 +123,44 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
 
     for f in &mut script.functions {
         context.local_vars.clear();
+        context.local_vars.push_scope();
         for (name, type_) in &f.params {
-            if let Some(Var { span, .. }) = context
+            if let Some(span) = context
                 .local_vars
                 .get(name)
-                .or_else(|| context.global_vars.get(name))
+                .map(|id| &context.locals[id].span)
+                .or_else(|| context.global_vars.get(name).map(|v| &v.span))
             {
                 result =
                     report_duplicate_definition("Variable already defined", &f.span, span, source);
             } else {
                 context.local_vars.insert(
                     name.clone(),
-                    Var {
-                        type_: *type_,
-                        span: f.span.clone(),
-                        mutable: true,
-                    },
+                    context
+                        .locals
+                        .add_param(f.span.clone(), name.clone(), *type_),
                 );
             }
         }
         context.return_type = f.type_;
 
         tc_expression(&mut context, &mut f.body)?;
+
+        let mut local_mapping: Vec<(ast::Type, usize)> = context
+            .locals
+            .locals
+            .iter()
+            .enumerate()
+            .filter(|(_, local)| local.index.is_some())
+            .map(|(index, local)| (local.type_, index))
+            .collect();
+        local_mapping.sort_by_key(|&(t, _)| t);
+        let locals_start = context.locals.params.len();
+        for (id, (_, index)) in local_mapping.into_iter().enumerate() {
+            context.locals.locals[index].index = Some((locals_start + id) as u32);
+        }
+
+        f.locals = std::mem::replace(&mut context.locals, ast::Locals::default());
 
         if f.body.type_ != f.type_ {
             result = type_mismatch(f.type_, &f.span, f.body.type_, &f.body.span, source);
@@ -233,10 +250,48 @@ struct Context<'a> {
     source: &'a str,
     global_vars: Vars,
     functions: HashMap<String, FunctionType>,
-    local_vars: Vars,
+    locals: ast::Locals,
+    local_vars: LocalVars,
     block_stack: Vec<String>,
     return_type: Option<ast::Type>,
     intrinsics: Intrinsics,
+}
+
+struct LocalVars(Vec<HashMap<String, u32>>);
+
+impl LocalVars {
+    fn new() -> LocalVars {
+        LocalVars(Vec::new())
+    }
+
+    fn get(&self, name: &str) -> Option<u32> {
+        self.0
+            .iter()
+            .rev()
+            .filter_map(|scope| scope.get(name))
+            .next()
+            .copied()
+    }
+
+    fn get_in_current(&self, name: &str) -> Option<u32> {
+        self.0.last().unwrap().get(name).copied()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    fn push_scope(&mut self) {
+        self.0.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.0.pop();
+    }
+
+    fn insert(&mut self, name: String, id: u32) {
+        self.0.last_mut().unwrap().insert(name, id);
+    }
 }
 
 fn report_duplicate_definition(
@@ -360,20 +415,25 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
             ref mut statements,
             ref mut final_expression,
         } => {
+            context.local_vars.push_scope();
             for stmt in statements {
                 tc_expression(context, stmt)?;
             }
-            if let Some(final_expression) = final_expression {
+            let type_ = if let Some(final_expression) = final_expression {
                 tc_expression(context, final_expression)?;
                 final_expression.type_
             } else {
                 None
-            }
+            };
+            context.local_vars.pop_scope();
+            type_
         }
         ast::Expr::Let {
             ref mut value,
             ref mut type_,
             ref name,
+            let_type,
+            ref mut local_id,
             ..
         } => {
             if let Some(ref mut value) = value {
@@ -395,26 +455,21 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 }
             }
             if let Some(type_) = type_ {
-                if let Some(Var { span, .. }) = context
+                let store = let_type != ast::LetType::Inline;
+                let id = context
                     .local_vars
-                    .get(name)
-                    .or_else(|| context.global_vars.get(name))
-                {
-                    return report_duplicate_definition(
-                        "Variable already defined",
-                        &expr.span,
-                        span,
-                        context.source,
-                    );
-                }
-                context.local_vars.insert(
-                    name.clone(),
-                    Var {
-                        type_: *type_,
-                        span: expr.span.clone(),
-                        mutable: true,
-                    },
-                );
+                    .get_in_current(name)
+                    .filter(|id| {
+                        let local = &context.locals[*id];
+                        local.type_ == *type_ && store == local.index.is_some()
+                    })
+                    .unwrap_or_else(|| {
+                        context
+                            .locals
+                            .add_local(expr.span.clone(), name.clone(), *type_, store)
+                    });
+                *local_id = Some(id);
+                context.local_vars.insert(name.clone(), id);
             } else {
                 Report::build(ReportKind::Error, (), expr.span.start)
                     .with_message("Type missing")
@@ -528,12 +583,14 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 }
             }
         }
-        ast::Expr::Variable(ref name) => {
-            if let Some(&Var { type_, .. }) = context
-                .global_vars
-                .get(name)
-                .or_else(|| context.local_vars.get(name))
-            {
+        ast::Expr::Variable {
+            ref name,
+            ref mut local_id,
+        } => {
+            if let Some(id) = context.local_vars.get(name) {
+                *local_id = Some(id);
+                Some(context.locals[id].type_)
+            } else if let Some(&Var { type_, .. }) = context.global_vars.get(name) {
                 Some(type_)
             } else {
                 return unknown_variable(&expr.span, context.source);
@@ -542,58 +599,61 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
         ast::Expr::Assign {
             ref name,
             ref mut value,
+            ref mut local_id,
         } => {
             tc_expression(context, value)?;
-            if let Some(&Var {
+
+            let (type_, span) = if let Some(id) = context.local_vars.get(name) {
+                *local_id = Some(id);
+                let local = &context.locals[id];
+                if local.index.is_none() {
+                    return immutable_assign(&expr.span, context.source);
+                }
+                (local.type_, &local.span)
+            } else if let Some(&Var {
                 type_,
                 ref span,
                 mutable,
-            }) = context
-                .local_vars
-                .get(name)
-                .or_else(|| context.global_vars.get(name))
+            }) = context.global_vars.get(name)
             {
-                if value.type_ != Some(type_) {
-                    return type_mismatch(
-                        Some(type_),
-                        span,
-                        value.type_,
-                        &value.span,
-                        context.source,
-                    );
-                }
                 if !mutable {
                     return immutable_assign(&expr.span, context.source);
                 }
+                (type_, span)
             } else {
                 return unknown_variable(&expr.span, context.source);
+            };
+
+            if value.type_ != Some(type_) {
+                return type_mismatch(Some(type_), span, value.type_, &value.span, context.source);
             }
             None
         }
         ast::Expr::LocalTee {
             ref name,
             ref mut value,
+            ref mut local_id,
         } => {
             tc_expression(context, value)?;
-            if let Some(&Var {
-                type_,
-                ref span,
-                mutable,
-            }) = context.local_vars.get(name)
-            {
-                if value.type_ != Some(type_) {
+            if let Some(id) = context.local_vars.get(name) {
+                *local_id = Some(id);
+                let local = &context.locals[id];
+
+                if local.index.is_none() {
+                    return immutable_assign(&expr.span, context.source);
+                }
+
+                if value.type_ != Some(local.type_) {
                     return type_mismatch(
-                        Some(type_),
-                        span,
+                        Some(local.type_),
+                        &local.span,
                         value.type_,
                         &value.span,
                         context.source,
                     );
                 }
-                if !mutable {
-                    return immutable_assign(&expr.span, context.source);
-                }
-                Some(type_)
+
+                Some(local.type_)
             } else {
                 return unknown_variable(&expr.span, context.source);
             }

@@ -1,17 +1,21 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::io::prelude::*;
 use std::{fs::File, path::PathBuf};
 
-use curlywas::compile_file;
+use curlywas::{compile_file, Options};
 
 fn main() -> Result<()> {
-    let mut filename = PathBuf::from(
-        std::env::args()
-            .nth(1)
-            .ok_or_else(|| anyhow!("Path to .hw file missing"))?,
-    );
+    let mut args = pico_args::Arguments::from_env();
 
-    let wasm = compile_file(&filename)?;
+    let mut options = Options::default();
+
+    if args.contains(["-d", "--debug"]) {
+        options = options.with_debug();
+    }
+
+    let mut filename = args.free_from_os_str::<PathBuf, bool>(|s| Ok(s.into()))?;
+
+    let wasm = compile_file(&filename, options)?;
 
     wasmparser::validate(&wasm)?;
 

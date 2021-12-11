@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use wasm_encoder::{
     BlockType, CodeSection, DataSection, EntityType, Export, ExportSection, Function,
-    FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemoryType,
-    Module, StartSection, TypeSection, ValType,
+    FunctionSection, GlobalSection, GlobalType, ImportSection, IndirectNameMap, Instruction,
+    MemArg, MemoryType, Module, NameMap, NameSection, StartSection, TypeSection, ValType,
 };
 
-use crate::{ast, intrinsics::Intrinsics};
+use crate::{ast, intrinsics::Intrinsics, Options};
 
-pub fn emit(script: &ast::Script) -> Vec<u8> {
+pub fn emit(script: &ast::Script, module_name: &str, options: &Options) -> Vec<u8> {
     let mut module = Module::new();
 
     let function_types = collect_function_types(script);
@@ -188,6 +188,56 @@ pub fn emit(script: &ast::Script) -> Vec<u8> {
         module.section(&data_section);
     }
 
+    if options.debug {
+        let mut names = NameSection::new();
+
+        names.module(module_name);
+
+        let mut functions = HashMap::new();
+        for (name, index) in &function_map {
+            functions.insert(*index, name);
+        }
+        let mut keys: Vec<_> = functions.keys().collect();
+        keys.sort();
+
+        let mut function_names = NameMap::new();
+        for i in keys {
+            function_names.append(*i, functions[i]);
+        }
+        names.functions(&function_names);
+
+        let mut functions = HashMap::new();
+        for function in &script.functions {
+            let mut local_names = NameMap::new();
+            for param in &function.locals.params {
+                local_names.append(param.index.unwrap(), &param.name);
+            }
+
+            let mut locals = HashMap::new();
+            for local in &function.locals.locals {
+                if let Some(index) = local.index {
+                    locals.insert(index, &local.name);
+                }
+            }
+            let mut keys: Vec<_> = locals.keys().collect();
+            keys.sort();
+            for i in keys {
+                local_names.append(*i, locals[i]);
+            }
+            functions.insert(*function_map.get(&function.name).unwrap(), local_names);
+        }
+        let mut keys: Vec<_> = functions.keys().collect();
+        keys.sort();
+
+        let mut locals = IndirectNameMap::new();
+        for i in keys {
+            locals.append(*i, &functions[i]);
+        }
+        names.locals(&locals);
+
+        module.section(&names);
+    }
+
     module.finish()
 }
 
@@ -237,9 +287,9 @@ struct FunctionContext<'a> {
     function: &'a mut Function,
     globals: &'a HashMap<&'a str, u32>,
     functions: &'a HashMap<String, u32>,
-    locals: &'a HashMap<String, u32>,
+    locals: &'a ast::Locals,
     labels: Vec<String>,
-    let_values: HashMap<&'a str, (&'a ast::Expression, ast::LetType)>,
+    let_values: HashMap<u32, (&'a ast::Expression, ast::LetType)>,
     intrinsics: &'a Intrinsics,
 }
 
@@ -249,27 +299,22 @@ fn emit_function(
     functions: &HashMap<String, u32>,
     intrinsics: &Intrinsics,
 ) -> Function {
-    let mut locals = Vec::new();
-    collect_locals_expr(&func.body, &mut locals);
-    locals.sort_by_key(|(_, t)| *t);
-
-    let mut function = Function::new_with_locals_types(locals.iter().map(|(_, t)| map_type(*t)));
-
-    let mut local_map: HashMap<String, u32> = HashMap::new();
-
-    for (ref name, _) in func.params.iter() {
-        local_map.insert(name.clone(), local_map.len() as u32);
-    }
-
-    for (name, _) in locals {
-        local_map.insert(name, local_map.len() as u32);
-    }
+    let mut function = Function::new_with_locals_types({
+        let mut locals: Vec<(u32, ast::Type)> = func
+            .locals
+            .locals
+            .iter()
+            .filter_map(|local| local.index.map(|i| (i, local.type_)))
+            .collect();
+        locals.sort();
+        locals.into_iter().map(|(_, t)| map_type(t))
+    });
 
     let mut context = FunctionContext {
         function: &mut function,
         globals,
         functions,
-        locals: &local_map,
+        locals: &func.locals,
         labels: vec![],
         let_values: HashMap::new(),
         intrinsics,
@@ -282,89 +327,6 @@ fn emit_function(
     function.instruction(&Instruction::End);
 
     function
-}
-
-fn collect_locals_expr<'a>(expr: &ast::Expression, locals: &mut Vec<(String, ast::Type)>) {
-    match &expr.expr {
-        ast::Expr::Block {
-            statements,
-            final_expression,
-        } => {
-            for stmt in statements {
-                collect_locals_expr(stmt, locals);
-            }
-            if let Some(ref expr) = final_expression {
-                collect_locals_expr(expr, locals);
-            }
-        }
-        ast::Expr::Let {
-            name, type_, value, ..
-        } => {
-            locals.push((name.clone(), type_.unwrap()));
-            if let Some(ref value) = value {
-                collect_locals_expr(value, locals);
-            }
-        }
-        ast::Expr::Peek(mem_location) => collect_locals_expr(&mem_location.left, locals),
-        ast::Expr::Poke {
-            mem_location,
-            value,
-            ..
-        } => {
-            collect_locals_expr(&mem_location.left, locals);
-            collect_locals_expr(value, locals);
-        }
-        ast::Expr::Variable { .. }
-        | ast::Expr::I32Const(_)
-        | ast::Expr::I64Const(_)
-        | ast::Expr::F32Const(_)
-        | ast::Expr::F64Const(_) => (),
-        ast::Expr::UnaryOp { value, .. } => collect_locals_expr(value, locals),
-        ast::Expr::BinOp { left, right, .. } => {
-            collect_locals_expr(left, locals);
-            collect_locals_expr(right, locals);
-        }
-        ast::Expr::Branch(_) => (),
-        ast::Expr::BranchIf { condition, .. } => collect_locals_expr(condition, locals),
-        ast::Expr::Assign { value, .. } => collect_locals_expr(value, locals),
-        ast::Expr::LocalTee { value, .. } => collect_locals_expr(value, locals),
-        ast::Expr::Loop { block, .. } => collect_locals_expr(block, locals),
-        ast::Expr::LabelBlock { block, .. } => collect_locals_expr(block, locals),
-        ast::Expr::Cast { value, .. } => collect_locals_expr(value, locals),
-        ast::Expr::FuncCall { params, .. } => {
-            for param in params {
-                collect_locals_expr(param, locals);
-            }
-        }
-        ast::Expr::Select {
-            condition,
-            if_true,
-            if_false,
-            ..
-        } => {
-            collect_locals_expr(condition, locals);
-            collect_locals_expr(if_true, locals);
-            collect_locals_expr(if_false, locals);
-        }
-        ast::Expr::If {
-            condition,
-            if_true,
-            if_false,
-        } => {
-            collect_locals_expr(condition, locals);
-            collect_locals_expr(if_true, locals);
-            if let Some(if_false) = if_false {
-                collect_locals_expr(if_false, locals);
-            }
-        }
-        ast::Expr::Return { value: Some(value) } => collect_locals_expr(value, locals),
-        ast::Expr::Return { value: None } => (),
-        ast::Expr::First { value, drop } => {
-            collect_locals_expr(value, locals);
-            collect_locals_expr(drop, locals);
-        }
-        ast::Expr::Error => unreachable!(),
-    }
 }
 
 fn mem_arg_for_location(mem_location: &ast::MemoryLocation) -> MemArg {
@@ -405,19 +367,20 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         }
         ast::Expr::Let {
             value,
-            name,
             let_type,
+            local_id,
             ..
         } => {
+            let local = &ctx.locals[local_id.unwrap()];
             if let Some(ref value) = value {
                 match let_type {
                     ast::LetType::Normal => {
                         emit_expression(ctx, value);
                         ctx.function
-                            .instruction(&Instruction::LocalSet(*ctx.locals.get(name).unwrap()));
+                            .instruction(&Instruction::LocalSet(local.index.unwrap()));
                     }
                     ast::LetType::Lazy | ast::LetType::Inline => {
-                        ctx.let_values.insert(name, (value, *let_type));
+                        ctx.let_values.insert(local_id.unwrap(), (value, *let_type));
                     }
                 }
             }
@@ -599,11 +562,16 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         ast::Expr::F64Const(v) => {
             ctx.function.instruction(&Instruction::F64Const(*v));
         }
-        ast::Expr::Assign { name, value, .. } => {
+        ast::Expr::Assign {
+            name,
+            value,
+            local_id,
+            ..
+        } => {
             emit_expression(ctx, value);
-            if let Some(local_index) = ctx.locals.get(name) {
+            if let &Some(id) = local_id {
                 ctx.function
-                    .instruction(&Instruction::LocalSet(*local_index));
+                    .instruction(&Instruction::LocalSet(ctx.locals[id].index.unwrap()));
             } else if let Some(global_index) = ctx.globals.get(name.as_str()) {
                 ctx.function
                     .instruction(&Instruction::GlobalSet(*global_index));
@@ -611,10 +579,13 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 unreachable!();
             }
         }
-        ast::Expr::LocalTee { name, value, .. } => {
+        ast::Expr::LocalTee {
+            value, local_id, ..
+        } => {
             emit_expression(ctx, value);
-            let index = ctx.locals.get(name).unwrap();
-            ctx.function.instruction(&Instruction::LocalTee(*index));
+            ctx.function.instruction(&Instruction::LocalTee(
+                ctx.locals[local_id.unwrap()].index.unwrap(),
+            ));
         }
         ast::Expr::Loop { label, block, .. } => {
             ctx.labels.push(label.to_string());
@@ -632,14 +603,15 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             ctx.labels.pop();
             ctx.function.instruction(&Instruction::End);
         }
-        ast::Expr::Variable(name) => {
-            if let Some(index) = ctx.locals.get(name) {
-                if let Some((expr, let_type)) = ctx.let_values.get(name.as_str()) {
+        ast::Expr::Variable { name, local_id } => {
+            if let &Some(id) = local_id {
+                if let Some((expr, let_type)) = ctx.let_values.get(&id) {
                     match let_type {
                         ast::LetType::Lazy => {
-                            let expr = ctx.let_values.remove(name.as_str()).unwrap().0;
+                            let expr = ctx.let_values.remove(&id).unwrap().0;
                             emit_expression(ctx, expr);
-                            ctx.function.instruction(&Instruction::LocalTee(*index));
+                            ctx.function
+                                .instruction(&Instruction::LocalTee(ctx.locals[id].index.unwrap()));
                         }
                         ast::LetType::Inline => {
                             let expr = *expr;
@@ -648,7 +620,8 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                         _ => unreachable!(),
                     }
                 } else {
-                    ctx.function.instruction(&Instruction::LocalGet(*index));
+                    ctx.function
+                        .instruction(&Instruction::LocalGet(ctx.locals[id].index.unwrap()));
                 }
             } else if let Some(index) = ctx.globals.get(name.as_str()) {
                 ctx.function.instruction(&Instruction::GlobalGet(*index));
