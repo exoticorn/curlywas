@@ -144,6 +144,8 @@ export fn upd() {
 }
 ```
 
+The body of a function is a block (see below), meaning a sequence of statements followed by an optional expression which gives the return value of the function.
+
 #### Local variables
 
 Variables are defined using `let`:
@@ -280,7 +282,15 @@ non-zero integer.
 
 #### Memory load/store
 
-...
+To read from memory you specify a memory location as `base?offset` or `base!offset`. `?` reads a byte and `!` reads a 32bit word.
+
+`base` can be any expression that evaluates to an `i32` while `offset` has to be a constant `i32` value. The effective memory address is the sum of both.
+
+Writing to memory looks just like an assignment to a memory location: `base?offset = expressoin` and `base!offset = expression`.
+
+When reading/writing 32bit words you need to make sure the address is 4-byte aligned.
+
+These compile to `i32.load8_u`, `i32.load`, `i32.store8` and `i32.store`. Other WASM load/store instructions will be implemented as intrinsics, but aren't yet. 
 
 #### Advanced sequencing
 
@@ -306,3 +316,14 @@ after drawing a rectangle with color `c` and setting the color for the text to `
 * Call `rect` which draws a rectangle with the set color. This call doesn't affect the stack.
 * Call `set_color(4)` which sets the drawing color to `4` and pushes another 6 on the stack.
 * Call `text` with the parameters (`8000`, `6`, `6`) pushed on the stack. 
+
+## Limitations
+
+The idea of Curlywas is to be able to hand-craft any valid WASM program, ie. having the same amount of control over the instruction sequence as if you would write in the web assembly text format (`.wat`) just with better ergonomics.
+
+This goal is not yet fully reached, with the following being the main limitations:
+
+* Curlywas currently only targets MVP web assembly + non-trapping float-to-int conversions. No other post-MVP features are currently supported. Especially "Multi-value" will be problematic as this allows programs that don't map cleanly to an expression tree.
+* Memory intrinsics are still missing, so only (unsigned) 8 and 32 bit integer reads and writes are possible.
+* `block`s cannot return values, as the branch instructions are missing syntax to pass along a value.
+* `br_table` and `call_indirect` are not yet implemented.
