@@ -158,6 +158,10 @@ They can also be initialized to a value at the same time, in this case the type 
 let name = expression;
 ```
 
+Local variables are lexically scoped and shadowing variables declared earlier is explicitely allowed.
+
+`name = value;` assigns a new value to a (non-inline) variable.
+
 There are two modifiers that change when the initializer expression is actually evaluated. They both can reduce the size of the resulting code (when used appropriately), but it is up to the coder to make sure that the delayed evaluation doesn't change the semantics of the code.
 
 ```
@@ -237,3 +241,68 @@ There are intrinsic functions for all WASM instructions that simply take a numbe
 Some common float instructions have shortcuts, ie. they can be used without the `f32.` / `.f64.` prefix:
 
 `sqrt, min, max, ceil, floor, trunc, nearest, abs, copysign`
+
+`name := value` both assigns the value to the variable `name` and returns the value (using the `local.tee` WASM instruction).
+
+Blocks are delimited by curly braces `{ }`. They contain zero or more statements, optionally followed by an expression. They evaluate to the
+value of that final expression if it is there.
+
+So for example this block evaluates to 12:
+
+```
+{
+  let a = 5;
+  let b = 7;
+  a + b
+}
+```
+
+Blocks are used as function bodies and in flow control (`if`, `block`, `loop`), but can also used at any point inside an expression.
+
+#### Flow control
+
+`if condition_expression { if_true_block } [else {if_false_block}]` executes the `if_true_block` if the condition evaluates to a non-zero integer and
+the `if_false_block` otherwise (if it exists). It can also be used as an expression, for example:
+
+```
+let a = if 0 { 2 } else { 3 }; // assigns 3 to a
+```
+
+`block name { ... }` opens a named block scope. A branch statement can be used to jump to the end of the block. Currently, `block` can only be used
+as a statement, returning a value from the block is not yet supported.
+
+`loop name { ... }` opens a named loop scope. A branch statement can be used to jump back to the beginning of the loop.
+
+`branch name` jumps to the end/start of the named `block` or `loop` scope. `branch_if condition: name` does the same if the condition evaluates to a
+non-zero integer.
+
+`return [expression]` returns from the current function with the value of the optional expression.
+
+#### Memory load/store
+
+...
+
+#### Advanced sequencing
+
+Sometimes when sizeoptimizing it helps to be able to execute some side-effecty code in the middle an expression.
+Using a block scope, we can execute any number of statements before evaluating a final expression to an actual value. For example:
+
+```
+let x = { randomSeed(time); random() }; // set the random seed right before optaining a random value
+```
+
+To execute something after evaluating the value we want to return, we can use the `<|` operator. Here is an example from the Wasm4 version of
+Skip Ahead (see the example folder for the full source):
+
+```
+text(8000, set_color(c) <| rect(rx, y, rw, 1), set_color(4));
+```
+
+Here, we first set the color to `c`. `set_color` also happens to return the constant `6` which we want to use for the text x-position but only
+after drawing a rectangle with color `c` and setting the color for the text to `4`. This line compiles to the following sequence:
+
+* Push `8000` onto the stack
+* Call `set_color(c)` which sets the drawing color and pushes 6 on the stack
+* Call `rect` which draws a rectangle with the set color. This call doesn't affect the stack.
+* Call `set_color(4)` which sets the drawing color to `4` and pushes another 6 on the stack.
+* Call `text` with the parameters (`8000`, `6`, `6`) pushed on the stack. 
