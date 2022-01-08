@@ -158,9 +158,7 @@ They can also be initialized to a value at the same time, in this case the type 
 let name = expression;
 ```
 
-There are two modifiers that change when the initializer expression is actually evaluated.
-
-They both can reduce the size of the resulting code, but it is up to the coder to make sure that the delayed evaluation doesn't change the semantics of the code.
+There are two modifiers that change when the initializer expression is actually evaluated. They both can reduce the size of the resulting code (when used appropriately), but it is up to the coder to make sure that the delayed evaluation doesn't change the semantics of the code.
 
 ```
 let inline name = expression;
@@ -205,3 +203,37 @@ if rand() & 1 {
     printNumber(foo / 2 + 2); // foo is never initialized in the else branch
 }
 ```
+
+#### Expressions
+
+Expressions are written in familiar infix operator and function call syntax.
+
+The avaliable operators are:
+
+| Precedence | Symbol           | WASM instruction(s)                    | Description                   |
+| ---------- | ---------------- | -------------------------------------- | ----------------------------- |
+| 1          | -                | fxx.neg, ixx.sub                       | Unary negate                  |
+|            | !                | i32.eqz                                | Unary not / equal to zero     |
+| 2          | as               | default signed casts                   | Type cast                     |
+| 3          | ?, !             | i32.load_u8_u, i32.load                | load byte/word                |
+| 4          | *                | ixx.mul, fxx.mul                       | Multiplication                |
+|            | /, %             | ixx.div_s, fxx.div, ixx.rem_s          | signed division / remainder   |
+|            | #/, #%           | ixx.div_u, ixx.rem_u                   | unsigned division / remainder |
+| 5          | +, -             | xxx.add, xxx.sub                       | Addition, substraction        |
+| 6          | <<, >>, #>>      | ixx.shl, ixx.shr_s, ixx.shr_u          | Shifts                        |
+| 7          | ==, !=           | xxx.eq, xxx.ne                         | Equal, not equal              |
+|            | <, <=, >, >=     | ixx.lt_s, ixx.le_s, ixx.gt_s, ixx.ge_s | signed comparison             |
+|            |                  | fxx.lt, fxx.le, fxx.gt, fxx.ge         |                               |
+|            | #<, #<=, #>, #>= | ixx.lt_u, ixx.le_u, ixx.gt_u, ixx.ge_u | unsigned comparison           |
+| 8          | &, \|, ^         | ixx.and, ixx.or, ixx.xor               | Bitwise logic                 |
+| 9          | <\|              | n/a                                    | take first, see sequencing    |
+
+You can obviously group sub-expression using brackets `( )`.
+
+Functions can be called using familiar `function_name(parameters)` syntax.
+
+There are intrinsic functions for all WASM instructions that simply take a number of parameters and return a value. So you can, for example, do something like `i32.clz(value)` to use instructions that don't map to their own operator.
+
+Some common float instructions have shortcuts, ie. they can be used without the `f32.` / `.f64.` prefix:
+
+`sqrt, min, max, ceil, floor, trunc, nearest, abs, copysign`
