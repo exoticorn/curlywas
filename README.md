@@ -58,7 +58,7 @@ Then run it on [MicroW8](https://exoticorn.github.io/microw8/v0.1pre2)
 
 ### Types
 
-There are four types in WebAssembly and therefore Curlywas:
+There are four types in WebAssembly and therefore CurlyWas:
 
 * `i32`: 32bit integer
 * `i64`: 64bit integer
@@ -93,7 +93,7 @@ this does not work, yet:
 
 ### Imports
 
-WebAssembly imports are specified with a module and a name. In Curlywas you give them inside a single string literal, seperated by a dot. So a module `env` and name `printString` would be written `"env.printString"`.
+WebAssembly imports are specified with a module and a name. In CurlyWas you give them inside a single string literal, seperated by a dot. So a module `env` and name `printString` would be written `"env.printString"`.
 
 Linear memory can be imported like this:
 
@@ -123,6 +123,20 @@ import "env.cls" cls(i32);         // no return type
 import "env.random" rand() -> i32; // no params
 import "env.atan2" atan2(f32, f32) -> f32;
 ```
+
+### Global variables
+
+Global variables are declare like this:
+
+```
+global name[: type] = value;             // immutable global value
+global mut name[: type] = initial_value; // mutable variable
+```
+
+An immutable global is probably of very limited use, as usually you'd most often use it by exporting it so that some other module
+can use it. However, exporting global variable is not yet supported in CurlyWas.
+
+The type is optional, if missing it is inferred from the init value.
 
 ### Functions
 
@@ -298,7 +312,7 @@ Sometimes when sizeoptimizing it helps to be able to execute some side-effecty c
 Using a block scope, we can execute any number of statements before evaluating a final expression to an actual value. For example:
 
 ```
-let x = { randomSeed(time); random() }; // set the random seed right before optaining a random value
+let x = { randomSeed(time); random() }; // set the random seed right before obtaining a random value
 ```
 
 To execute something after evaluating the value we want to return, we can use the `<|` operator. Here is an example from the Wasm4 version of
@@ -319,11 +333,11 @@ after drawing a rectangle with color `c` and setting the color for the text to `
 
 ## Limitations
 
-The idea of Curlywas is to be able to hand-craft any valid WASM program, ie. having the same amount of control over the instruction sequence as if you would write in the web assembly text format (`.wat`) just with better ergonomics.
+The idea of CurlyWas is to be able to hand-craft any valid WASM program, ie. having the same amount of control over the instruction sequence as if you would write in the web assembly text format (`.wat`) just with better ergonomics.
 
 This goal is not yet fully reached, with the following being the main limitations:
 
-* Curlywas currently only targets MVP web assembly + non-trapping float-to-int conversions. No other post-MVP features are currently supported. Especially "Multi-value" will be problematic as this allows programs that don't map cleanly to an expression tree.
+* CurlyWas currently only targets MVP web assembly + non-trapping float-to-int conversions. No other post-MVP features are currently supported. Especially "Multi-value" will be problematic as this allows programs that don't map cleanly to an expression tree.
 * Memory intrinsics are still missing, so only (unsigned) 8 and 32 bit integer reads and writes are possible.
 * `block`s cannot return values, as the branch instructions are missing syntax to pass along a value.
 * `br_table` and `call_indirect` are not yet implemented.
