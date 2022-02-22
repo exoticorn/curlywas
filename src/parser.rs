@@ -183,7 +183,8 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
             u64::from_str_radix(&n, 16).map_err(|err| Simple::custom(span, err.to_string()))
         })
         .or(text::int(10).try_map(|n: String, span: Span| {
-            u64::from_str_radix(&n, 10).map_err(|err| Simple::custom(span, err.to_string()))
+            n.parse::<u64>()
+                .map_err(|err| Simple::custom(span, err.to_string()))
         }))
         .boxed();
 
@@ -358,7 +359,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
             let branch = just(Token::Branch)
                 .ignore_then(identifier)
-                .map(|label| ast::Expr::Branch(label));
+                .map(ast::Expr::Branch);
 
             let branch_if = just(Token::BranchIf)
                 .ignore_then(expression.clone())
@@ -377,7 +378,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .or(just(Token::Inline).to(ast::LetType::Inline)))
                     .or_not(),
                 )
-                .then(identifier.clone())
+                .then(identifier)
                 .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
                 .then(
                     just(Token::Op("=".to_string()))
@@ -394,7 +395,6 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .boxed();
 
             let assign = identifier
-                .clone()
                 .then_ignore(just(Token::Op("=".to_string())))
                 .then(expression.clone())
                 .map(|(name, value)| ast::Expr::Assign {
@@ -422,7 +422,6 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .boxed();
 
             let function_call = identifier
-                .clone()
                 .then(
                     expression
                         .clone()
@@ -676,7 +675,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 })
                 .boxed();
 
-            let op_first = op_bit
+            op_bit
                 .clone()
                 .then(
                     just(Token::Op("<|".to_string()))
@@ -691,9 +690,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     }
                     .with_span(span)
                 })
-                .boxed();
-
-            op_first
+                .boxed()
         });
 
         expression_out = Some(expression.clone());
@@ -718,7 +715,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 }
                 ast::Expr::Block {
                     statements: statements.into_iter().map(|(expr, _)| expr).collect(),
-                    final_expression: final_expression.map(|e| Box::new(e)),
+                    final_expression: final_expression.map(Box::new),
                 }
                 .with_span(span)
             })
@@ -740,7 +737,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
         let import_global = just(Token::Global)
             .ignore_then(just(Token::Mut).or_not())
-            .then(identifier.clone())
+            .then(identifier)
             .then_ignore(just(Token::Ctrl(':')))
             .then(type_parser())
             .map(|((mut_opt, name), type_)| ast::ImportType::Variable {
@@ -751,7 +748,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .boxed();
 
         let import_function = just(Token::Fn)
-            .ignore_then(identifier.clone())
+            .ignore_then(identifier)
             .then(
                 type_parser()
                     .separated_by(just(Token::Ctrl(',')))
@@ -783,7 +780,6 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .boxed();
 
         let parameter = identifier
-            .clone()
             .then_ignore(just(Token::Ctrl(':')))
             .then(type_parser())
             .boxed();
@@ -792,7 +788,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .or_not()
             .then(just(Token::Ident("start".to_string())).or_not())
             .then_ignore(just(Token::Fn))
-            .then(identifier.clone())
+            .then(identifier)
             .then(
                 parameter
                     .separated_by(just(Token::Ctrl(',')))
@@ -820,7 +816,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
         let global = just(Token::Global)
             .ignore_then(just(Token::Mut).or_not())
-            .then(identifier.clone())
+            .then(identifier)
             .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
             .then(just(Token::Op("=".to_string())).ignore_then(expression.clone()))
             .then_ignore(just(Token::Ctrl(';')))
@@ -850,7 +846,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             )
             .map(|(type_, values)| ast::DataValues::Array { type_, values });
 
-        let data_string = string.clone().map(|s| ast::DataValues::String(s));
+        let data_string = string.clone().map(ast::DataValues::String);
 
         let data_file = just(Token::Ident("file".to_string()))
             .ignore_then(

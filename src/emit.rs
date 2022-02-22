@@ -66,7 +66,7 @@ pub fn emit(script: &ast::Script, module_name: &str, options: &Options) -> Vec<u
                     function_map.insert(name.clone(), function_map.len() as u32);
                     EntityType::Function(
                         *function_types
-                            .get(&(params.clone(), result.clone()))
+                            .get(&(params.clone(), *result))
                             .unwrap() as u32,
                     )
                 }
@@ -255,7 +255,7 @@ fn collect_function_types(script: &ast::Script) -> HashMap<FunctionTypeKey, usiz
         {
             let index = types.len();
             types
-                .entry((params.clone(), result.clone()))
+                .entry((params.clone(), *result))
                 .or_insert(index);
         }
     }

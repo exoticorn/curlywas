@@ -160,7 +160,7 @@ pub fn tc_script(script: &mut ast::Script, source: &str) -> Result<()> {
             context.locals.locals[index].index = Some((locals_start + id) as u32);
         }
 
-        f.locals = std::mem::replace(&mut context.locals, ast::Locals::default());
+        f.locals = std::mem::take(&mut context.locals);
 
         if f.body.type_ != f.type_ {
             result = type_mismatch(f.type_, &f.span, f.body.type_, &f.body.span, source);
@@ -333,7 +333,7 @@ fn type_mismatch(
                     "Expected type {:?}...",
                     type1
                         .map(|t| format!("{:?}", t))
-                        .unwrap_or("void".to_string())
+                        .unwrap_or_else(|| "void".to_string())
                 ))
                 .with_color(Color::Yellow),
         )
@@ -343,7 +343,7 @@ fn type_mismatch(
                     "...but found type {}",
                     type2
                         .map(|t| format!("{:?}", t))
-                        .unwrap_or("void".to_string())
+                        .unwrap_or_else(|| "void".to_string())
                 ))
                 .with_color(Color::Red),
         )
@@ -406,7 +406,7 @@ fn missing_label(span: &Span, source: &str) -> Result<()> {
         .finish()
         .eprint(Source::from(source))
         .unwrap();
-    return Err(());
+    Err(())
 }
 
 fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()> {

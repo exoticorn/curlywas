@@ -20,10 +20,7 @@ pub struct Options {
 
 impl Options {
     pub fn with_debug(self) -> Self {
-        Options {
-            debug: true,
-            ..self
-        }
+        Options { debug: true }
     }
 }
 
@@ -36,7 +33,7 @@ pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<Vec<u8>
 }
 
 pub fn compile_str(input: &str, path: &Path, options: Options) -> Result<Vec<u8>> {
-    let mut script = match parser::parse(&input) {
+    let mut script = match parser::parse(input) {
         Ok(script) => script,
         Err(_) => bail!("Parse failed"),
     };
@@ -44,7 +41,7 @@ pub fn compile_str(input: &str, path: &Path, options: Options) -> Result<Vec<u8>
     includes::resolve_includes(&mut script, path)?;
 
     constfold::fold_script(&mut script);
-    if let Err(_) = typecheck::tc_script(&mut script, &input) {
+    if typecheck::tc_script(&mut script, input).is_err() {
         bail!("Type check failed");
     }
     let wasm = emit::emit(

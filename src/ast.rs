@@ -288,7 +288,7 @@ impl Expr {
         Expression {
             type_: None,
             expr: self,
-            span: span,
+            span,
         }
     }
 }
