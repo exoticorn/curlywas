@@ -212,7 +212,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .collect::<String>()
         .map(Token::Op);
 
-    let ctrl = one_of("(){};,:?!".chars()).map(Token::Ctrl);
+    let ctrl = one_of("(){};,:?!$".chars()).map(Token::Ctrl);
 
     fn ident() -> impl Parser<char, String, Error = Simple<char>> + Copy + Clone {
         filter(|c: &char| c.is_ascii_alphabetic() || *c == '_')
@@ -498,7 +498,8 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
 
             let mem_size = just(Token::Ctrl('?'))
                 .to(ast::MemSize::Byte)
-                .or(just(Token::Ctrl('!')).to(ast::MemSize::Word));
+                .or(just(Token::Ctrl('!')).to(ast::MemSize::Word))
+                .or(just(Token::Ctrl('$')).to(ast::MemSize::Float));
 
             let mem_op = mem_size.then(op_cast.clone());
 

@@ -1,5 +1,6 @@
 use crate::ast::Type;
 use std::collections::HashMap;
+use enc::MemArg;
 use wasm_encoder as enc;
 
 pub struct Intrinsics(HashMap<String, HashMap<Vec<Type>, (Type, enc::Instruction<'static>)>>);
@@ -136,5 +137,60 @@ impl Intrinsics {
             .entry(name)
             .or_default()
             .insert(params.to_vec(), (ret, ins.clone()));
+    }
+
+    pub fn find_load(&self, name: &str) -> Option<MemInstruction> {
+        use enc::Instruction as I;
+        use Type::*;
+        let ins = match name {
+            "i32.load" => MemInstruction::new(I32, I::I32Load, 2),
+            "i32.load8_s" => MemInstruction::new(I32, I::I32Load8_S, 0),
+            "i32.load8_u" => MemInstruction::new(I32, I::I32Load8_U, 0),
+            "i32.load16_s" => MemInstruction::new(I32, I::I32Load16_S, 1),
+            "i32.load16_u" => MemInstruction::new(I32, I::I32Load16_U, 1),
+            "i64.load" => MemInstruction::new(I64, I::I64Load, 3),
+            "i64.load8_s" => MemInstruction::new(I64, I::I64Load8_S, 0),
+            "i64.load8_u" => MemInstruction::new(I64, I::I64Load8_U, 0),
+            "i64.load16_s" => MemInstruction::new(I64, I::I64Load16_S, 1),
+            "i64.load16_u" => MemInstruction::new(I64, I::I64Load16_U, 1),
+            "i64.load32_s" => MemInstruction::new(I64, I::I64Load32_S, 2),
+            "i64.load32_u" => MemInstruction::new(I64, I::I64Load32_U, 2),
+            "f32.load" => MemInstruction::new(F32, I::F32Load, 2),
+            "f64.load" => MemInstruction::new(F64, I::F64Load, 3),
+            _ => return None
+        };
+        return Some(ins);
+    }
+
+    pub fn find_store(&self, name: &str) -> Option<MemInstruction> {
+        use enc::Instruction as I;
+        use Type::*;
+        let ins = match name {
+            "i32.store" => MemInstruction::new(I32, I::I32Store, 2),
+            "i32.store8" => MemInstruction::new(I32, I::I32Store8, 0),
+            "i32.store16" => MemInstruction::new(I32, I::I32Store16, 1),
+            "i64.store" => MemInstruction::new(I64, I::I64Store, 3),
+            "i64.store8" => MemInstruction::new(I64, I::I64Store8, 0),
+            "i64.store16" => MemInstruction::new(I64, I::I64Store16, 1),
+            "i64.store32" => MemInstruction::new(I64, I::I64Store32, 2),
+            "f32.store" => MemInstruction::new(F32, I::F32Store, 2),
+            "f64.store" => MemInstruction::new(F64, I::F64Store, 3),
+            _ => return None
+        };
+        return Some(ins);
+    }
+}
+
+pub struct MemInstruction {
+    pub type_: Type,
+    pub instruction: fn(MemArg) -> enc::Instruction<'static>,
+    pub natural_alignment: u32
+}
+
+impl MemInstruction {
+    fn new(type_: Type, instruction: fn(MemArg) -> enc::Instruction<'static>, natural_alignment: u32) -> MemInstruction {
+        MemInstruction {
+            type_, instruction, natural_alignment
+        }
     }
 }

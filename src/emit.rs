@@ -6,7 +6,11 @@ use wasm_encoder::{
     MemArg, MemoryType, Module, NameMap, NameSection, StartSection, TypeSection, ValType,
 };
 
-use crate::{ast, intrinsics::Intrinsics, Options};
+use crate::{
+    ast,
+    intrinsics::{Intrinsics, MemInstruction},
+    Options,
+};
 
 pub fn emit(script: &ast::Script, module_name: &str, options: &Options) -> Vec<u8> {
     let mut module = Module::new();
@@ -65,9 +69,7 @@ pub fn emit(script: &ast::Script, module_name: &str, options: &Options) -> Vec<u
                 } => {
                     function_map.insert(name.clone(), function_map.len() as u32);
                     EntityType::Function(
-                        *function_types
-                            .get(&(params.clone(), *result))
-                            .unwrap() as u32,
+                        *function_types.get(&(params.clone(), *result)).unwrap() as u32
                     )
                 }
             };
@@ -254,9 +256,7 @@ fn collect_function_types(script: &ast::Script) -> HashMap<FunctionTypeKey, usiz
         } = import.type_
         {
             let index = types.len();
-            types
-                .entry((params.clone(), *result))
-                .or_insert(index);
+            types.entry((params.clone(), *result)).or_insert(index);
         }
     }
 
@@ -346,6 +346,11 @@ fn mem_arg_for_location(mem_location: &ast::MemoryLocation) -> MemArg {
             memory_index: 0,
             offset,
         },
+        ast::MemSize::Float => MemArg {
+            align: 2,
+            memory_index: 0,
+            offset,
+        },
     }
 }
 
@@ -391,6 +396,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             ctx.function.instruction(&match mem_location.size {
                 ast::MemSize::Byte => Instruction::I32Load8_U(mem_arg),
                 ast::MemSize::Word => Instruction::I32Load(mem_arg),
+                ast::MemSize::Float => Instruction::F32Load(mem_arg),
             });
         }
         ast::Expr::Poke {
@@ -403,6 +409,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             ctx.function.instruction(&match mem_location.size {
                 ast::MemSize::Byte => Instruction::I32Store8(mem_arg),
                 ast::MemSize::Word => Instruction::I32Store(mem_arg),
+                ast::MemSize::Float => Instruction::F32Store(mem_arg),
             });
         }
         ast::Expr::UnaryOp { op, value } => {
@@ -654,19 +661,45 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             }
         }
         ast::Expr::FuncCall { name, params, .. } => {
-            for param in params {
-                emit_expression(ctx, param);
+            fn mem_instruction(
+                inst: MemInstruction,
+                params: &[ast::Expression],
+            ) -> Instruction<'static> {
+                let offset = params
+                    .get(0)
+                    .map(|e| e.const_i32() as u32 as u64)
+                    .unwrap_or(0);
+                let alignment = params.get(1).map(|e| e.const_i32() as u32);
+                (inst.instruction)(MemArg {
+                    offset,
+                    align: alignment.unwrap_or(inst.natural_alignment),
+                    memory_index: 0,
+                })
             }
-
-            if let Some(index) = ctx.functions.get(name) {
-                ctx.function.instruction(&Instruction::Call(*index));
-            } else {
-                let mut types = vec![];
-                for param in params {
-                    types.push(param.type_.unwrap());
-                }
+            if let Some(load) = ctx.intrinsics.find_load(name) {
+                emit_expression(ctx, &params[0]);
                 ctx.function
-                    .instruction(&ctx.intrinsics.get_instr(name, &types).unwrap());
+                    .instruction(&mem_instruction(load, &params[1..]));
+            } else if let Some(store) = ctx.intrinsics.find_store(name) {
+                emit_expression(ctx, &params[1]);
+                emit_expression(ctx, &params[0]);
+                ctx.function
+                    .instruction(&mem_instruction(store, &params[2..]));
+            } else {
+                for param in params {
+                    emit_expression(ctx, param);
+                }
+
+                if let Some(index) = ctx.functions.get(name) {
+                    ctx.function.instruction(&Instruction::Call(*index));
+                } else {
+                    let mut types = vec![];
+                    for param in params {
+                        types.push(param.type_.unwrap());
+                    }
+                    ctx.function
+                        .instruction(&ctx.intrinsics.get_instr(name, &types).unwrap());
+                }
             }
         }
         ast::Expr::Select {

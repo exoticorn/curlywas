@@ -1,7 +1,7 @@
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use std::collections::HashMap;
 
-use crate::ast;
+use crate::ast::{self, MemSize};
 use crate::intrinsics::Intrinsics;
 use crate::Span;
 use ast::Type::*;
@@ -353,60 +353,38 @@ fn type_mismatch(
     Err(())
 }
 
-fn expected_type(span: &Span, source: &str) -> Result<()> {
+fn report_error(msg: &str, span: &Span, source: &str) -> Result<()> {
     Report::build(ReportKind::Error, (), span.start)
-        .with_message("Expected value but found expression of type void")
+        .with_message(msg)
         .with_label(
             Label::new(span.clone())
-                .with_message("Expected value but found expression of type void")
+                .with_message(msg)
                 .with_color(Color::Red),
         )
         .finish()
         .eprint(Source::from(source))
         .unwrap();
     Err(())
+}
+
+fn expected_type(span: &Span, source: &str) -> Result<()> {
+    report_error(
+        "Expected value but found expression of type void",
+        span,
+        source,
+    )
 }
 
 fn unknown_variable(span: &Span, source: &str) -> Result<()> {
-    Report::build(ReportKind::Error, (), span.start)
-        .with_message("Unknown variable")
-        .with_label(
-            Label::new(span.clone())
-                .with_message("Unknown variable")
-                .with_color(Color::Red),
-        )
-        .finish()
-        .eprint(Source::from(source))
-        .unwrap();
-    Err(())
+    report_error("Unknown variable", span, source)
 }
 
 fn immutable_assign(span: &Span, source: &str) -> Result<()> {
-    Report::build(ReportKind::Error, (), span.start)
-        .with_message("Trying to assign to immutable variable")
-        .with_label(
-            Label::new(span.clone())
-                .with_message("Trying to assign to immutable variable")
-                .with_color(Color::Red),
-        )
-        .finish()
-        .eprint(Source::from(source))
-        .unwrap();
-    Err(())
+    report_error("Trying to assign to immutable variable", span, source)
 }
 
 fn missing_label(span: &Span, source: &str) -> Result<()> {
-    Report::build(ReportKind::Error, (), span.start)
-        .with_message("Label not found")
-        .with_label(
-            Label::new(span.clone())
-                .with_message("Label not found")
-                .with_color(Color::Red),
-        )
-        .finish()
-        .eprint(Source::from(source))
-        .unwrap();
-    Err(())
+    report_error("Label not found", span, source)
 }
 
 fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()> {
@@ -471,23 +449,17 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                 *local_id = Some(id);
                 context.local_vars.insert(name.clone(), id);
             } else {
-                Report::build(ReportKind::Error, (), expr.span.start)
-                    .with_message("Type missing")
-                    .with_label(
-                        Label::new(expr.span.clone())
-                            .with_message("Type missing")
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(Source::from(context.source))
-                    .unwrap();
-                return Err(());
+                return report_error("Type missing", &expr.span, context.source);
             }
             None
         }
         ast::Expr::Peek(ref mut mem_location) => {
             tc_mem_location(context, mem_location)?;
-            Some(I32)
+            let ty = match mem_location.size {
+                MemSize::Float => F32,
+                _ => I32,
+            };
+            Some(ty)
         }
         ast::Expr::Poke {
             ref mut mem_location,
@@ -495,9 +467,13 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
         } => {
             tc_mem_location(context, mem_location)?;
             tc_expression(context, value)?;
-            if value.type_ != Some(I32) {
+            let ty = match mem_location.size {
+                MemSize::Float => F32,
+                _ => I32,
+            };
+            if value.type_ != Some(ty) {
                 return type_mismatch(
-                    Some(I32),
+                    Some(ty),
                     &expr.span,
                     value.type_,
                     &value.span,
@@ -725,7 +701,27 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     return expected_type(&param.span, context.source);
                 }
             }
-            if let Some(type_map) = context
+            if let Some(load) = context.intrinsics.find_load(name) {
+                tc_memarg(context, params.as_mut_slice(), &expr.span)?;
+                Some(load.type_)
+            } else if let Some(store) = context.intrinsics.find_store(name) {
+                if let Some(value) = params.first_mut() {
+                    tc_expression(context, value)?;
+                    if value.type_ != Some(store.type_) {
+                        type_mismatch(
+                            Some(store.type_),
+                            &expr.span,
+                            value.type_,
+                            &value.span,
+                            context.source,
+                        )?;
+                    }
+                } else {
+                    return report_error("Missing parameters", &expr.span, context.source);
+                }
+                tc_memarg(context, &mut params[1..], &expr.span)?;
+                None
+            } else if let Some(type_map) = context
                 .functions
                 .get(name)
                 .map(|fnc| HashMap::from_iter([(fnc.params.clone(), fnc.type_)]))
@@ -759,17 +755,11 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     return Err(());
                 }
             } else {
-                Report::build(ReportKind::Error, (), expr.span.start)
-                    .with_message(format!("Unknown function {}", name))
-                    .with_label(
-                        Label::new(expr.span.clone())
-                            .with_message(format!("Unknown function {}", name))
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(Source::from(context.source))
-                    .unwrap();
-                return Err(());
+                return report_error(
+                    &format!("Unknown function {}", name),
+                    &expr.span,
+                    context.source,
+                );
             }
         }
         ast::Expr::Select {
@@ -890,19 +880,40 @@ fn tc_const(expr: &mut ast::Expression, source: &str) -> Result<()> {
         I64Const(_) => I64,
         F32Const(_) => F32,
         F64Const(_) => F64,
-        _ => {
-            Report::build(ReportKind::Error, (), expr.span.start)
-                .with_message("Expected constant value")
-                .with_label(
-                    Label::new(expr.span.clone())
-                        .with_message("Expected constant value")
-                        .with_color(Color::Red),
-                )
-                .finish()
-                .eprint(Source::from(source))
-                .unwrap();
-            return Err(());
-        }
+        _ => return report_error("Expected constant value", &expr.span, source),
     });
+    Ok(())
+}
+
+fn tc_memarg(context: &mut Context, params: &mut [ast::Expression], span: &Span) -> Result<()> {
+    if params.is_empty() || params.len() > 3 {
+        let msg = if params.is_empty() {
+            "Missing base address parameter"
+        } else {
+            "Too many MemArg parameters"
+        };
+        return report_error(msg, span, context.source);
+    }
+
+    for (index, param) in params.iter_mut().enumerate() {
+        tc_expression(context, param)?;
+        if param.type_ != Some(I32) {
+            return type_mismatch(Some(I32), &span, param.type_, &param.span, context.source);
+        }
+        if index > 0 {
+            tc_const(param, context.source)?;
+        }
+        if index == 2 {
+            let align = param.const_i32();
+            if align < 0 || align > 4 {
+                return report_error(
+                    &format!("Alignment {} out of range (0-4)", align),
+                    &param.span,
+                    context.source,
+                );
+            }
+        }
+    }
+
     Ok(())
 }

@@ -337,6 +337,7 @@ pub enum BinOp {
 pub enum MemSize {
     Byte,
     Word,
+    Float
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]

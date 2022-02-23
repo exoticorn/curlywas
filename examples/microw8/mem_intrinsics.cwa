@@ -1,0 +1,16 @@
+import "env.memory" memory(4);
+import "env.random" fn random() -> i32;
+
+export fn upd() {
+    let i: i32;
+    loop pixels {
+        let inline left = i32.load8_u((i + (320*240 - 319)) % (320*240), 120);
+        let inline top = i32.load8_u((i + 320*239) % (320*240), 120, 0);
+        let inline here = i32.load16_u(i, 119);
+        let inline all = (left << 24) | (top << 16) | here;
+        let lazy r = random();
+        let inline new = (all #>> ((r & 3) * 8)) ^ ((r & 31) * !(r #>> 22));
+        i32.store8(new, i, 120);
+        branch_if (i := i + 1) < 320*240: pixels;
+    }
+}
