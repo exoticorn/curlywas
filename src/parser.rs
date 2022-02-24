@@ -24,11 +24,11 @@ impl Sources {
         Sources(Vec::new())
     }
 
-    pub fn add(&mut self, path: &Path) -> Result<usize> {
+    pub fn add(&mut self, path: &Path) -> Result<(usize, bool)> {
         let canonical = path.canonicalize()?;
         for (index, source) in self.0.iter().enumerate() {
             if source.path.canonicalize()? == canonical {
-                return Ok(index);
+                return Ok((index, false));
             }
         }
         let mut source = String::new();
@@ -37,7 +37,7 @@ impl Sources {
             source: ariadne::Source::from(source),
             path: path.to_path_buf(),
         });
-        Ok(self.0.len() - 1)
+        Ok((self.0.len() - 1, true))
     }
 }
 
@@ -970,7 +970,12 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             })
             .boxed();
 
-        import.or(function).or(global).or(data).boxed()
+        let include =
+            just(Token::Ident("include".to_string())).ignore_then(string.clone().map_with_span(
+                |path, span| ast::TopLevelItem::Include(ast::Include { span, path }),
+            ));
+
+        import.or(function).or(global).or(data).or(include).boxed()
     };
 
     top_level_item.repeated().then_ignore(end()).map(|items| {
@@ -979,6 +984,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             global_vars: Vec::new(),
             functions: Vec::new(),
             data: Vec::new(),
+            includes: Vec::new(),
         };
         for item in items {
             match item {
@@ -986,6 +992,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
                 ast::TopLevelItem::GlobalVar(v) => script.global_vars.push(v),
                 ast::TopLevelItem::Function(f) => script.functions.push(f),
                 ast::TopLevelItem::Data(d) => script.data.push(d),
+                ast::TopLevelItem::Include(i) => script.includes.push(i),
             }
         }
         script

@@ -2,12 +2,23 @@ use std::{fmt, path::PathBuf};
 
 use crate::parser::Span;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Script {
     pub imports: Vec<Import>,
     pub global_vars: Vec<GlobalVar>,
     pub functions: Vec<Function>,
     pub data: Vec<Data>,
+    pub includes: Vec<Include>
+}
+
+impl Script {
+    pub fn merge(&mut self, mut other: Script) {
+        self.imports.append(&mut other.imports);
+        self.global_vars.append(&mut other.global_vars);
+        self.functions.append(&mut other.functions);
+        self.data.append(&mut other.data);
+        assert!(other.includes.is_empty());
+    }
 }
 
 #[derive(Debug)]
@@ -16,6 +27,13 @@ pub enum TopLevelItem {
     GlobalVar(GlobalVar),
     Function(Function),
     Data(Data),
+    Include(Include)
+}
+
+#[derive(Debug)]
+pub struct Include {
+    pub span: Span,
+    pub path: String,
 }
 
 #[derive(Debug)]

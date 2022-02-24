@@ -357,7 +357,7 @@ fn type_mismatch(
     Err(())
 }
 
-fn report_error(msg: &str, span: &Span, sources: &Sources) -> Result<()> {
+pub fn report_error(msg: &str, span: &Span, sources: &Sources) -> Result<()> {
     Report::build(ReportKind::Error, span.0, span.1.start)
         .with_message(msg)
         .with_label(
