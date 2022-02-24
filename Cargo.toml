@@ -7,9 +7,9 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wasmparser = "0.81"
-wasm-encoder = "0.8"
+wasmparser = "0.83"
+wasm-encoder = "0.10"
 anyhow = "1"
-chumsky = "0.5"
+chumsky = "0.8"
 ariadne = "0.1"
 pico-args = "0.4"

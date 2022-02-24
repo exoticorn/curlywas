@@ -138,7 +138,7 @@ fn report_errors(errors: Vec<Simple<String>>, source: &str) {
                     } else {
                         error
                             .expected()
-                            .map(|x| x.to_string())
+                            .map(|x| x.as_deref().unwrap_or("EOF"))
                             .collect::<Vec<_>>()
                             .join(", ")
                     }
@@ -168,7 +168,7 @@ fn report_errors(errors: Vec<Simple<String>>, source: &str) {
 fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let float64 = text::int(10)
         .chain::<char, _, _>(just('.').chain(text::digits(10)))
-        .then_ignore(seq::<_, _, Simple<char>>("f64".chars()))
+        .then_ignore(just("f64"))
         .collect::<String>()
         .map(Token::Float64);
 
@@ -177,7 +177,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .collect::<String>()
         .map(Token::Float);
 
-    let integer = seq::<_, _, Simple<char>>("0x".chars())
+    let integer = just::<_, _, Simple<char>>("0x")
         .ignore_then(text::int(16))
         .try_map(|n, span| {
             u64::from_str_radix(&n, 16).map_err(|err| Simple::custom(span, err.to_string()))
@@ -190,7 +190,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
 
     let int64 = integer
         .clone()
-        .then_ignore(seq::<_, _, Simple<char>>("i64".chars()))
+        .then_ignore(just("i64"))
         .map(|n| Token::Int64(n as i64));
 
     let int = integer.try_map(|n, span| {
@@ -205,14 +205,14 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .collect::<String>()
         .map(Token::Str);
 
-    let op = one_of("+-*/%&^|<=>#".chars())
+    let op = one_of("+-*/%&^|<=>#")
         .repeated()
         .at_least(1)
         .or(just(':').chain(just('=')))
         .collect::<String>()
         .map(Token::Op);
 
-    let ctrl = one_of("(){};,:?!$".chars()).map(Token::Ctrl);
+    let ctrl = one_of("(){};,:?!$").map(Token::Ctrl);
 
     fn ident() -> impl Parser<char, String, Error = Simple<char>> + Copy + Clone {
         filter(|c: &char| c.is_ascii_alphabetic() || *c == '_')
@@ -242,11 +242,9 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         _ => Token::Ident(ident),
     });
 
-    let single_line =
-        seq::<_, _, Simple<char>>("//".chars()).then_ignore(take_until(text::newline()));
+    let single_line = just("//").then_ignore(take_until(text::newline()));
 
-    let multi_line =
-        seq::<_, _, Simple<char>>("/*".chars()).then_ignore(take_until(seq("*/".chars())));
+    let multi_line = just("/*").then_ignore(take_until(just("*/")));
 
     let comment = single_line.or(multi_line);
 
@@ -412,7 +410,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .then(expression.clone())
                         .then_ignore(just(Token::Ctrl(',')))
                         .then(expression.clone())
-                        .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
                 )
                 .map(|((condition, if_true), if_false)| ast::Expr::Select {
                     condition: Box::new(condition),
@@ -426,7 +424,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     expression
                         .clone()
                         .separated_by(just(Token::Ctrl(',')))
-                        .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
                 )
                 .map(|(name, params)| ast::Expr::FuncCall { name, params })
                 .boxed();
@@ -451,7 +449,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .map_with_span(|expr, span| expr.with_span(span))
                 .or(expression
                     .clone()
-                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')))
+                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))))
                 .or(block)
                 .recover_with(nested_delimiters(
                     Token::Ctrl('('),
@@ -720,7 +718,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 }
                 .with_span(span)
             })
-            .delimited_by(Token::Ctrl('{'), Token::Ctrl('}'))
+            .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}')))
             .boxed()
     });
 
@@ -731,7 +729,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .ignore_then(
                 integer
                     .clone()
-                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
             )
             .map(|min_size| ast::ImportType::Memory(min_size as u32))
             .boxed();
@@ -753,7 +751,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .then(
                 type_parser()
                     .separated_by(just(Token::Ctrl(',')))
-                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
             )
             .then(
                 just(Token::Op("->".to_string()))
@@ -793,7 +791,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .then(
                 parameter
                     .separated_by(just(Token::Ctrl(',')))
-                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
             )
             .then(
                 just(Token::Op("->".to_string()))
@@ -843,7 +841,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 expression
                     .clone()
                     .separated_by(just(Token::Ctrl(',')))
-                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
             )
             .map(|(type_, values)| ast::DataValues::Array { type_, values });
 
@@ -853,7 +851,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
             .ignore_then(
                 string
                     .clone()
-                    .delimited_by(Token::Ctrl('('), Token::Ctrl(')')),
+                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
             )
             .map(|s| ast::DataValues::File {
                 path: s.into(),
@@ -867,7 +865,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     .or(data_string)
                     .or(data_file)
                     .repeated()
-                    .delimited_by(Token::Ctrl('{'), Token::Ctrl('}')),
+                    .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}'))),
             )
             .map(|(offset, data)| {
                 ast::TopLevelItem::Data(ast::Data {
@@ -908,10 +906,10 @@ fn type_parser() -> impl Parser<Token, ast::Type, Error = Simple<Token>> + Clone
         _ => Err(Simple::expected_input_found(
             span,
             vec![
-                Token::Ident("i32".into()),
-                Token::Ident("i64".into()),
-                Token::Ident("f32".into()),
-                Token::Ident("f64".into()),
+                Some(Token::Ident("i32".into())),
+                Some(Token::Ident("i64".into())),
+                Some(Token::Ident("f32".into())),
+                Some(Token::Ident("f64".into())),
             ],
             Some(tok),
         )),
