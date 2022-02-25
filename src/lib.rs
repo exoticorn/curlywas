@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use std::ffi::OsStr;
-use std::io::prelude::*;
-use std::{fs::File, path::Path};
+use std::path::Path;
+use parser::Sources;
 
 mod ast;
 mod constfold;
@@ -10,8 +10,6 @@ mod includes;
 mod intrinsics;
 mod parser;
 mod typecheck;
-
-type Span = std::ops::Range<usize>;
 
 #[derive(Default)]
 pub struct Options {
@@ -26,14 +24,11 @@ impl Options {
 
 pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<Vec<u8>> {
     let path = path.as_ref();
-    let mut input = String::new();
-    File::open(path)?.read_to_string(&mut input)?;
 
-    compile_str(&input, path, options)
-}
-
-pub fn compile_str(input: &str, path: &Path, options: Options) -> Result<Vec<u8>> {
-    let mut script = match parser::parse(input) {
+    let mut sources = Sources::new();
+    let id = sources.add(path)?;
+ 
+    let mut script = match parser::parse(&sources, id) {
         Ok(script) => script,
         Err(_) => bail!("Parse failed"),
     };
@@ -41,7 +36,7 @@ pub fn compile_str(input: &str, path: &Path, options: Options) -> Result<Vec<u8>
     includes::resolve_includes(&mut script, path)?;
 
     constfold::fold_script(&mut script);
-    if typecheck::tc_script(&mut script, input).is_err() {
+    if typecheck::tc_script(&mut script, &sources).is_err() {
         bail!("Type check failed");
     }
     let wasm = emit::emit(

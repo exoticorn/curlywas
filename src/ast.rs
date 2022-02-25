@@ -1,6 +1,6 @@
 use std::{fmt, path::PathBuf};
 
-use crate::Span;
+use crate::parser::Span;
 
 #[derive(Debug)]
 pub struct Script {

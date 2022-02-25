@@ -1,8 +1,62 @@
 use crate::ast;
-use crate::Span;
-use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
-use chumsky::{prelude::*, stream::Stream};
-use std::fmt;
+use anyhow::Result;
+use ariadne::{Color, Fmt, Label, Report, ReportKind};
+use chumsky::prelude::*;
+use std::{
+    fmt,
+    fs::File,
+    io::Read,
+    ops::Range,
+    path::{Path, PathBuf},
+};
+
+pub type Span = (usize, Range<usize>);
+
+pub struct SourceFile {
+    source: ariadne::Source,
+    path: PathBuf,
+}
+
+pub struct Sources(Vec<SourceFile>);
+
+impl Sources {
+    pub fn new() -> Sources {
+        Sources(Vec::new())
+    }
+
+    pub fn add(&mut self, path: &Path) -> Result<usize> {
+        let canonical = path.canonicalize()?;
+        for (index, source) in self.0.iter().enumerate() {
+            if source.path.canonicalize()? == canonical {
+                return Ok(index);
+            }
+        }
+        let mut source = String::new();
+        File::open(path)?.read_to_string(&mut source)?;
+        self.0.push(SourceFile {
+            source: ariadne::Source::from(source),
+            path: path.to_path_buf(),
+        });
+        Ok(self.0.len() - 1)
+    }
+}
+
+impl std::ops::Index<usize> for Sources {
+    type Output = SourceFile;
+    fn index(&self, idx: usize) -> &SourceFile {
+        &self.0[idx]
+    }
+}
+
+impl ariadne::Cache<usize> for &Sources {
+    fn fetch(&mut self, id: &usize) -> Result<&ariadne::Source, Box<dyn std::fmt::Debug + '_>> {
+        Ok(&self.0[*id].source)
+    }
+
+    fn display<'a>(&self, id: &'a usize) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(self.0[*id].path.clone().display().to_string()))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Token {
@@ -61,8 +115,36 @@ impl fmt::Display for Token {
     }
 }
 
-pub fn parse(source: &str) -> Result<ast::Script, ()> {
-    let tokens = match lexer().parse(source) {
+type SourceStream<It> = chumsky::Stream<'static, char, Span, It>;
+type TokenStream<It> = chumsky::Stream<'static, Token, Span, It>;
+
+pub fn parse(sources: &Sources, source_id: usize) -> Result<ast::Script, ()> {
+    let source = &sources[source_id].source;
+    let source_stream = SourceStream::from_iter(
+        (source_id, source.len()..source.len() + 1),
+        Box::new(
+            // this is a bit of an ugly hack
+            // once the next version of ariadne is released
+            // use the source string chars as input
+            // and only create the ariadne::Source lazily when printing errors
+            source
+                .lines()
+                .flat_map(|l| {
+                    let mut chars: Vec<char> = l.chars().collect();
+                    while chars.len() + 1 < l.len() {
+                        chars.push(' ');
+                    }
+                    if chars.len() < l.len() {
+                        chars.push('\n');
+                    }
+                    chars.into_iter()
+                })
+                .enumerate()
+                .map(|(index, char)| (char, (source_id, index..(index + 1)))),
+        ),
+    );
+
+    let tokens = match lexer().parse(source_stream) {
         Ok(tokens) => tokens,
         Err(errors) => {
             report_errors(
@@ -70,15 +152,14 @@ pub fn parse(source: &str) -> Result<ast::Script, ()> {
                     .into_iter()
                     .map(|e| e.map(|c| c.to_string()))
                     .collect(),
-                source,
+                sources,
             );
             return Err(());
         }
     };
 
-    let source_len = source.chars().count();
-    let script = match script_parser().parse(Stream::from_iter(
-        source_len..source_len + 1,
+    let script = match script_parser().parse(TokenStream::from_iter(
+        (source_id, source.len()..source.len() + 1),
         tokens.into_iter(),
     )) {
         Ok(script) => script,
@@ -88,7 +169,7 @@ pub fn parse(source: &str) -> Result<ast::Script, ()> {
                     .into_iter()
                     .map(|e| e.map(|t| t.to_string()))
                     .collect(),
-                source,
+                sources,
             );
             return Err(());
         }
@@ -96,9 +177,9 @@ pub fn parse(source: &str) -> Result<ast::Script, ()> {
     Ok(script)
 }
 
-fn report_errors(errors: Vec<Simple<String>>, source: &str) {
+fn report_errors(errors: Vec<Simple<String, Span>>, sources: &Sources) {
     for error in errors {
-        let report = Report::build(ReportKind::Error, (), error.span().start());
+        let report = Report::build(ReportKind::Error, error.span().0, error.span().1.start());
 
         let report = match error.reason() {
             chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
@@ -161,11 +242,12 @@ fn report_errors(errors: Vec<Simple<String>>, source: &str) {
             ),
         };
 
-        report.finish().eprint(Source::from(source)).unwrap();
+        report.finish().eprint(sources).unwrap();
     }
 }
 
-fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
+type LexerError = Simple<char, Span>;
+fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
     let float64 = text::int(10)
         .chain::<char, _, _>(just('.').chain(text::digits(10)))
         .then_ignore(just("f64"))
@@ -177,14 +259,14 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
         .collect::<String>()
         .map(Token::Float);
 
-    let integer = just::<_, _, Simple<char>>("0x")
+    let integer = just::<_, _, LexerError>("0x")
         .ignore_then(text::int(16))
         .try_map(|n, span| {
-            u64::from_str_radix(&n, 16).map_err(|err| Simple::custom(span, err.to_string()))
+            u64::from_str_radix(&n, 16).map_err(|err| LexerError::custom(span, err.to_string()))
         })
         .or(text::int(10).try_map(|n: String, span: Span| {
             n.parse::<u64>()
-                .map_err(|err| Simple::custom(span, err.to_string()))
+                .map_err(|err| LexerError::custom(span, err.to_string()))
         }))
         .boxed();
 
@@ -196,7 +278,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
     let int = integer.try_map(|n, span| {
         u32::try_from(n)
             .map(|n| Token::Int(n as i32))
-            .map_err(|err| Simple::custom(span, err.to_string()))
+            .map_err(|err| LexerError::custom(span, err.to_string()))
     });
 
     let str_ = just('"')
@@ -214,7 +296,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
 
     let ctrl = one_of("(){};,:?!$").map(Token::Ctrl);
 
-    fn ident() -> impl Parser<char, String, Error = Simple<char>> + Copy + Clone {
+    fn ident() -> impl Parser<char, String, Error = LexerError> + Copy + Clone {
         filter(|c: &char| c.is_ascii_alphabetic() || *c == '_')
             .map(Some)
             .chain::<char, Vec<_>, _>(
@@ -267,20 +349,29 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
 
 fn map_token<O>(
     f: impl Fn(&Token) -> Option<O> + 'static + Clone,
-) -> impl Parser<Token, O, Error = Simple<Token>> + Clone {
+) -> impl Parser<Token, O, Error = ScriptError> + Clone {
     filter_map(move |span, tok: Token| {
         if let Some(output) = f(&tok) {
             Ok(output)
         } else {
-            Err(Simple::expected_input_found(span, Vec::new(), Some(tok)))
+            Err(ScriptError::expected_input_found(
+                span,
+                Vec::new(),
+                Some(tok),
+            ))
         }
     })
 }
 
-fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + Clone {
+type ScriptError = Simple<Token, Span>;
+fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clone {
     let identifier = filter_map(|span, tok| match tok {
         Token::Ident(id) => Ok(id),
-        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+        _ => Err(ScriptError::expected_input_found(
+            span,
+            Vec::new(),
+            Some(tok),
+        )),
     })
     .labelled("identifier");
 
@@ -312,7 +403,11 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     name: id,
                     local_id: None,
                 }),
-                _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+                _ => Err(ScriptError::expected_input_found(
+                    span,
+                    Vec::new(),
+                    Some(tok),
+                )),
             })
             .labelled("variable");
 
@@ -467,7 +562,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 .then(atom)
                 .map(|(ops, value)| {
                     ops.into_iter().rev().fold(value, |acc, (op, span)| {
-                        let span = span.start..acc.span.end;
+                        let span = (span.0, span.1.start..acc.span.1.end);
                         ast::Expr::UnaryOp {
                             op,
                             value: Box::new(acc),
@@ -507,7 +602,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                 poke_op: Option<((ast::MemSize, ast::Expression), ast::Expression)>,
             ) -> ast::Expression {
                 let left = peek_ops.into_iter().fold(left, |left, (size, right)| {
-                    let span = left.span.start..right.span.end;
+                    let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::Peek(ast::MemoryLocation {
                         span: span.clone(),
                         left: Box::new(left),
@@ -517,7 +612,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                     .with_span(span)
                 });
                 if let Some(((size, right), value)) = poke_op {
-                    let span = left.span.start..value.span.end;
+                    let span = (left.span.0, left.span.1.start..value.span.1.end);
                     ast::Expr::Poke {
                         mem_location: ast::MemoryLocation {
                             span: span.clone(),
@@ -574,7 +669,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .repeated(),
                 )
                 .foldl(|left, (op, right)| {
-                    let span = left.span.start..right.span.end;
+                    let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
@@ -594,7 +689,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .repeated(),
                 )
                 .foldl(|left, (op, right)| {
-                    let span = left.span.start..right.span.end;
+                    let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
@@ -615,7 +710,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .repeated(),
                 )
                 .foldl(|left, (op, right)| {
-                    let span = left.span.start..right.span.end;
+                    let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
@@ -643,7 +738,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .repeated(),
                 )
                 .foldl(|left, (op, right)| {
-                    let span = left.span.start..right.span.end;
+                    let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
@@ -664,7 +759,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .repeated(),
                 )
                 .foldl(|left, (op, right)| {
-                    let span = left.span.start..right.span.end;
+                    let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
                         op,
                         left: Box::new(left),
@@ -682,7 +777,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
                         .repeated(),
                 )
                 .foldl(|left, right| {
-                    let span = left.span.start..right.span.end;
+                    let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::First {
                         value: Box::new(left),
                         drop: Box::new(right),
@@ -897,13 +992,13 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = Simple<Token>> + C
     })
 }
 
-fn type_parser() -> impl Parser<Token, ast::Type, Error = Simple<Token>> + Clone {
+fn type_parser() -> impl Parser<Token, ast::Type, Error = ScriptError> + Clone {
     filter_map(|span, tok| match tok {
         Token::Ident(id) if id == "i32" => Ok(ast::Type::I32),
         Token::Ident(id) if id == "i64" => Ok(ast::Type::I64),
         Token::Ident(id) if id == "f32" => Ok(ast::Type::F32),
         Token::Ident(id) if id == "f64" => Ok(ast::Type::F64),
-        _ => Err(Simple::expected_input_found(
+        _ => Err(ScriptError::expected_input_found(
             span,
             vec![
                 Some(Token::Ident("i32".into())),
