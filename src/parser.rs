@@ -487,16 +487,6 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
                 })
                 .boxed();
 
-            let assign = identifier
-                .then_ignore(just(Token::Op("=".to_string())))
-                .then(expression.clone())
-                .map(|(name, value)| ast::Expr::Assign {
-                    name,
-                    value: Box::new(value),
-                    local_id: None,
-                })
-                .boxed();
-
             let select = just(Token::Select)
                 .ignore_then(
                     expression
@@ -532,7 +522,6 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
 
             let atom = val
                 .or(function_call)
-                .or(assign)
                 .or(local_tee)
                 .or(variable)
                 .or(block_expr)
@@ -791,11 +780,24 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
 
         let block_expression = block_expression.unwrap();
 
+        let assign = identifier
+            .then_ignore(just(Token::Op("=".to_string())))
+            .then(expression.clone())
+            .map(|(name, value)| ast::Expr::Assign {
+                name,
+                value: Box::new(value),
+                local_id: None,
+            })
+            .map_with_span(|expr, span| expr.with_span(span))
+            .boxed();
+
         block_expression
             .clone()
             .then(just(Token::Ctrl(';')).or_not())
             .map_with_span(|(expr, semi), span| (expr.with_span(span), semi.is_none()))
-            .or(expression.clone().then(just(Token::Ctrl(';')).to(false)))
+            .or(assign
+                .or(expression.clone())
+                .then(just(Token::Ctrl(';')).to(false)))
             .repeated()
             .then(expression.clone().or_not())
             .map_with_span(|(mut statements, mut final_expression), span| {
