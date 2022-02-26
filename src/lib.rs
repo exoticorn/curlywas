@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
+use parser::Sources;
 use std::ffi::OsStr;
 use std::path::Path;
-use parser::Sources;
 
 mod ast;
 mod constfold;
@@ -36,15 +36,18 @@ pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<Vec<u8>
                     Ok(script) => script,
                     Err(_) => bail!("Parse failed"),
                 };
-            
+
                 includes::resolve_includes(&mut new_script, &path)?;
-    
+
                 for include in std::mem::take(&mut new_script.includes) {
-                    let mut path = path.parent().expect("Script path has no parent").to_path_buf();
+                    let mut path = path
+                        .parent()
+                        .expect("Script path has no parent")
+                        .to_path_buf();
                     path.push(include.path);
                     pending_files.push((path, Some(include.span)));
                 }
-    
+
                 script.merge(new_script);
             }
             Ok((_, false)) => (), // already parsed this include
@@ -59,8 +62,9 @@ pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<Vec<u8>
         }
     }
 
-
-    constfold::fold_script(&mut script);
+    if constfold::fold_script(&mut script, &sources).is_err() {
+        bail!("Constant folding failed");
+    }
     if typecheck::tc_script(&mut script, &sources).is_err() {
         bail!("Type check failed");
     }

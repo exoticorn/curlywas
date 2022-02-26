@@ -925,6 +925,21 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             })
             .boxed();
 
+        let global_const = just(Token::Ident("const".to_string()))
+            .ignore_then(identifier)
+            .then(just(Token::Ctrl(':')).ignore_then(type_parser()).or_not())
+            .then(just(Token::Op("=".to_string())).ignore_then(expression.clone()))
+            .then_ignore(just(Token::Ctrl(';')))
+            .map_with_span(|((name, type_), value), span| {
+                ast::TopLevelItem::Const(ast::GlobalConst {
+                    name,
+                    type_,
+                    value,
+                    span,
+                })
+            })
+            .boxed();
+
         let data_i8 = just(Token::Ident("i8".to_string()))
             .to(ast::DataType::I8)
             .or(just(Token::Ident("i16".to_string())).to(ast::DataType::I16))
@@ -975,17 +990,17 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
                 |path, span| ast::TopLevelItem::Include(ast::Include { span, path }),
             ));
 
-        import.or(function).or(global).or(data).or(include).boxed()
+        import
+            .or(function)
+            .or(global)
+            .or(data)
+            .or(include)
+            .or(global_const)
+            .boxed()
     };
 
     top_level_item.repeated().then_ignore(end()).map(|items| {
-        let mut script = ast::Script {
-            imports: Vec::new(),
-            global_vars: Vec::new(),
-            functions: Vec::new(),
-            data: Vec::new(),
-            includes: Vec::new(),
-        };
+        let mut script = ast::Script::default();
         for item in items {
             match item {
                 ast::TopLevelItem::Import(i) => script.imports.push(i),
@@ -993,6 +1008,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
                 ast::TopLevelItem::Function(f) => script.functions.push(f),
                 ast::TopLevelItem::Data(d) => script.data.push(d),
                 ast::TopLevelItem::Include(i) => script.includes.push(i),
+                ast::TopLevelItem::Const(c) => script.consts.push(c),
             }
         }
         script

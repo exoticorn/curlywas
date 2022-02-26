@@ -298,7 +298,7 @@ impl LocalVars {
     }
 }
 
-fn report_duplicate_definition(
+pub fn report_duplicate_definition(
     msg: &str,
     span: &Span,
     prev_span: &Span,

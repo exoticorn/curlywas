@@ -1,35 +1,103 @@
-use crate::ast;
+use std::collections::HashMap;
 
-pub fn fold_script(script: &mut ast::Script) {
+use crate::{
+    ast,
+    parser::{Sources, Span},
+    typecheck::{report_duplicate_definition, report_error},
+};
+
+type Result<T> = std::result::Result<T, ()>;
+
+pub fn fold_script(script: &mut ast::Script, sources: &Sources) -> Result<()> {
+    let mut context = Context {
+        consts: HashMap::new(),
+        sources,
+    };
+    fold_consts(&mut context, &mut script.consts)?;
+
     for var in &mut script.global_vars {
-        fold_expr(&mut var.value);
+        fold_expr(&context, &mut var.value);
     }
 
     for func in &mut script.functions {
-        fold_expr(&mut func.body);
+        fold_expr(&context, &mut func.body);
     }
 
     for data in &mut script.data {
-        fold_expr(&mut data.offset);
+        fold_expr(&context, &mut data.offset);
         for values in &mut data.data {
             match values {
                 ast::DataValues::Array { values, .. } => {
                     for value in values {
-                        fold_expr(value);
+                        fold_expr(&context, value);
                     }
                 }
                 ast::DataValues::String(_) | ast::DataValues::File { .. } => (),
             }
         }
     }
+
+    Ok(())
 }
 
-fn fold_mem_location(mem_location: &mut ast::MemoryLocation) {
-    fold_expr(&mut mem_location.left);
-    fold_expr(&mut mem_location.right);
+struct Context<'a> {
+    consts: HashMap<String, ast::Expr>,
+    sources: &'a Sources,
 }
 
-fn fold_expr(expr: &mut ast::Expression) {
+fn fold_consts(context: &mut Context, consts: &mut [ast::GlobalConst]) -> Result<()> {
+    let mut spans: HashMap<&str, Span> = HashMap::new();
+
+    for cnst in consts.iter_mut() {
+        if let Some(prev_span) = spans.insert(&cnst.name, cnst.span.clone()) {
+            report_duplicate_definition(
+                "Const already defined",
+                &cnst.span,
+                &prev_span,
+                context.sources,
+            )?;
+        }
+    }
+
+    while context.consts.len() < consts.len() {
+        let mut making_progress = false;
+        for cnst in consts.iter_mut() {
+            if !context.consts.contains_key(&cnst.name) {
+                fold_expr(context, &mut cnst.value);
+                if cnst.value.is_const() {
+                    context
+                        .consts
+                        .insert(cnst.name.clone(), cnst.value.expr.clone());
+                    making_progress = true;
+                }
+            }
+        }
+
+        if !making_progress {
+            break;
+        }
+    }
+
+    let mut result = Ok(());
+    for cnst in consts {
+        if !context.consts.contains_key(&cnst.name) {
+            result = report_error(
+                &format!("Failed to fold const '{}'", cnst.name),
+                &cnst.span,
+                context.sources,
+            );
+        }
+    }
+
+    result
+}
+
+fn fold_mem_location(context: &Context, mem_location: &mut ast::MemoryLocation) {
+    fold_expr(context, &mut mem_location.left);
+    fold_expr(context, &mut mem_location.right);
+}
+
+fn fold_expr(context: &Context, expr: &mut ast::Expression) {
     use ast::BinOp::*;
     match expr.expr {
         ast::Expr::Block {
@@ -37,15 +105,15 @@ fn fold_expr(expr: &mut ast::Expression) {
             ref mut final_expression,
         } => {
             for stmt in statements {
-                fold_expr(stmt);
+                fold_expr(context, stmt);
             }
             if let Some(ref mut expr) = final_expression {
-                fold_expr(expr);
+                fold_expr(context, expr);
             }
         }
         ast::Expr::Let { ref mut value, .. } => {
             if let Some(ref mut expr) = value {
-                fold_expr(expr);
+                fold_expr(context, expr);
             }
         }
         ast::Expr::Poke {
@@ -53,12 +121,12 @@ fn fold_expr(expr: &mut ast::Expression) {
             ref mut value,
             ..
         } => {
-            fold_mem_location(mem_location);
-            fold_expr(value);
+            fold_mem_location(context, mem_location);
+            fold_expr(context, value);
         }
-        ast::Expr::Peek(ref mut mem_location) => fold_mem_location(mem_location),
+        ast::Expr::Peek(ref mut mem_location) => fold_mem_location(context, mem_location),
         ast::Expr::UnaryOp { op, ref mut value } => {
-            fold_expr(value);
+            fold_expr(context, value);
             let result = match (op, &value.expr) {
                 (ast::UnaryOp::Negate, ast::Expr::I32Const(value)) => {
                     Some(ast::Expr::I32Const(-*value))
@@ -90,8 +158,8 @@ fn fold_expr(expr: &mut ast::Expression) {
             ref mut right,
             ..
         } => {
-            fold_expr(left);
-            fold_expr(right);
+            fold_expr(context, left);
+            fold_expr(context, right);
             match (&left.expr, &right.expr) {
                 (&ast::Expr::I32Const(left), &ast::Expr::I32Const(right)) => {
                     let result = match op {
@@ -237,24 +305,28 @@ fn fold_expr(expr: &mut ast::Expression) {
         ast::Expr::I32Const(_)
         | ast::Expr::I64Const(_)
         | ast::Expr::F32Const(_)
-        | ast::Expr::F64Const(_)
-        | ast::Expr::Variable { .. } => (),
-        ast::Expr::Assign { ref mut value, .. } => fold_expr(value),
-        ast::Expr::LocalTee { ref mut value, .. } => fold_expr(value),
-        ast::Expr::Loop { ref mut block, .. } => fold_expr(block),
-        ast::Expr::LabelBlock { ref mut block, .. } => fold_expr(block),
+        | ast::Expr::F64Const(_) => (),
+        ast::Expr::Variable { ref name, .. } => {
+            if let Some(value) = context.consts.get(name) {
+                expr.expr = value.clone();
+            }
+        }
+        ast::Expr::Assign { ref mut value, .. } => fold_expr(context, value),
+        ast::Expr::LocalTee { ref mut value, .. } => fold_expr(context, value),
+        ast::Expr::Loop { ref mut block, .. } => fold_expr(context, block),
+        ast::Expr::LabelBlock { ref mut block, .. } => fold_expr(context, block),
         ast::Expr::Branch(_) => (),
         ast::Expr::BranchIf {
             ref mut condition, ..
-        } => fold_expr(condition),
-        ast::Expr::Cast { ref mut value, .. } => fold_expr(value),
+        } => fold_expr(context, condition),
+        ast::Expr::Cast { ref mut value, .. } => fold_expr(context, value),
         ast::Expr::FuncCall {
             ref name,
             ref mut params,
             ..
         } => {
             for param in params.iter_mut() {
-                fold_expr(param);
+                fold_expr(context, param);
             }
             use ast::Expr::*;
             let params: Vec<_> = params.iter().map(|e| &e.expr).collect();
@@ -269,31 +341,31 @@ fn fold_expr(expr: &mut ast::Expression) {
             ref mut if_false,
             ..
         } => {
-            fold_expr(condition);
-            fold_expr(if_true);
-            fold_expr(if_false);
+            fold_expr(context, condition);
+            fold_expr(context, if_true);
+            fold_expr(context, if_false);
         }
         ast::Expr::If {
             ref mut condition,
             ref mut if_true,
             ref mut if_false,
         } => {
-            fold_expr(condition);
-            fold_expr(if_true);
+            fold_expr(context, condition);
+            fold_expr(context, if_true);
             if let Some(ref mut if_false) = if_false {
-                fold_expr(if_false);
+                fold_expr(context, if_false);
             }
         }
         ast::Expr::Return {
             value: Some(ref mut value),
-        } => fold_expr(value),
+        } => fold_expr(context, value),
         ast::Expr::Return { value: None } => (),
         ast::Expr::First {
             ref mut value,
             ref mut drop,
         } => {
-            fold_expr(value);
-            fold_expr(drop);
+            fold_expr(context, value);
+            fold_expr(context, drop);
         }
         ast::Expr::Error => unreachable!(),
     }

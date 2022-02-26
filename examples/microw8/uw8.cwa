@@ -1,0 +1,13 @@
+import "env.memory" memory(4);
+
+import "env.pow" fn pow(f32, f32) -> f32;
+import "env.sin" fn sin(f32) -> f32;
+import "env.cos" fn cos(f32) -> f32;
+import "env.atan2" fn atan2(f32, f32) -> f32;
+import "env.tan" fn tan(f32) -> f32;
+import "env.atan" fn atan(f32) -> f32;
+import "env.rectangle" fn rect(f32, f32, f32, f32, i32);
+
+const FRAMEBUFFER = 120;
+const PALETTE = 0x13000;
+const FONT = 0x13400;

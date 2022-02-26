@@ -1,29 +1,8 @@
-import "env.memory" memory(4);
+include "uw8.cwa"
 
-import "env.pow" fn pow(f32, f32) -> f32;
-import "env.sin" fn sin(f32) -> f32;
-import "env.cos" fn cos(f32) -> f32;
-import "env.atan2" fn atan2(f32, f32) -> f32;
-import "env.tan" fn tan(f32) -> f32;
-import "env.atan" fn atan(f32) -> f32;
-import "env.rectangle" fn rect(f32, f32, f32, f32, i32);
+const SWEETY = PALETTE + 192 * 4;
 
-//export fn tic(time: i32) {
-//    let i: i32;
-//    loop pixels {
-//        let lazy x = (i % 320) as f32 - 160.5;
-//        let lazy y = (i / 320 - 120) as f32;
-//
-//        let lazy dist = 4000 as f32 / sqrt(x*x + y*y + 10 as f32);
-//        let lazy angle = atan2(x, y) * (64.0 / 3.141);
-//
-//        i?120 = ((((dist + time as f32 / 63 as f32) as i32 ^ angle as i32) #% 32 + 32) >> ((dist as i32 - i % 7 * 3) / 40)) + 192;
-//
-//        branch_if (i := i + 1) < 320*240: pixels;
-//    }
-//}
-
-export fn tic(time: i32) {
+export fn upd() {
     let i: i32;
     loop colors {
         rect((i % 16 * 15) as f32, (i / 16 * 15) as f32, 15 as f32, 15 as f32, i);
@@ -43,7 +22,7 @@ start fn gen_palette() {
         let lazy a = max(llimit, min(ulimit, c)) * (scale + 0.05);
         let lazy b = scale * scale * 0.8;
         let inline v = (select(i < 11*16*3, max(0 as f32, min(a + b - a * b, 1 as f32)), scale) * 255 as f32) as i32;
-        (i%3 + i/3*4)?(120+320*240) = v;
+        (i%3 + i/3*4)?(PALETTE) = v;
         avg = (avg + c) * 0.5;
 
         branch_if i := i - 1: gradients;
@@ -56,15 +35,15 @@ start fn gen_palette() {
         let lazy first_step = index >= 32;
         let inline src1 = select(first_step, index % 32 / 2, index * 2);
         let inline src2 = select(first_step, (index + 1) % 32 / 2, index * 2 + 1);
-        let inline c1 = (src1 * 4 + channel)?(120+320*240+192*4);
-        let inline c2 = (src2 * 4 + channel)?(120+320*240+192*4);
-        i?(120+320*240+192*4) = (c1 + c2) * (3 + first_step) / 8;
+        let inline c1 = (src1 * 4 + channel)?SWEETY;
+        let inline c2 = (src2 * 4 + channel)?SWEETY;
+        i?(SWEETY) = (c1 + c2) * (3 + first_step) / 8;
 
         branch_if (i := i - 1) >= 0: expand_sweetie;
     }
 }
 
-data 120+320*240+192*4 {
+data SWEETY {
     i32(
         0x2c1c1a,
         0x5d275d,

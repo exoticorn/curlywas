@@ -8,7 +8,8 @@ pub struct Script {
     pub global_vars: Vec<GlobalVar>,
     pub functions: Vec<Function>,
     pub data: Vec<Data>,
-    pub includes: Vec<Include>
+    pub includes: Vec<Include>,
+    pub consts: Vec<GlobalConst>,
 }
 
 impl Script {
@@ -17,6 +18,7 @@ impl Script {
         self.global_vars.append(&mut other.global_vars);
         self.functions.append(&mut other.functions);
         self.data.append(&mut other.data);
+        self.consts.append(&mut other.consts);
         assert!(other.includes.is_empty());
     }
 }
@@ -27,7 +29,8 @@ pub enum TopLevelItem {
     GlobalVar(GlobalVar),
     Function(Function),
     Data(Data),
-    Include(Include)
+    Include(Include),
+    Const(GlobalConst),
 }
 
 #[derive(Debug)]
@@ -65,6 +68,14 @@ pub struct GlobalVar {
     pub value: Expression,
     pub type_: Option<Type>,
     pub mutable: bool,
+}
+
+#[derive(Debug)]
+pub struct GlobalConst {
+    pub span: Span,
+    pub name: String,
+    pub value: Expression,
+    pub type_: Option<Type>,
 }
 
 #[derive(Debug)]
@@ -170,7 +181,7 @@ pub enum DataType {
     F64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MemoryLocation {
     pub span: Span,
     pub size: MemSize,
@@ -178,7 +189,7 @@ pub struct MemoryLocation {
     pub right: Box<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expression {
     pub type_: Option<Type>,
     pub expr: Expr,
@@ -213,9 +224,16 @@ impl Expression {
             _ => panic!("Expected F64Const"),
         }
     }
+
+    pub fn is_const(&self) -> bool {
+        match self.expr {
+            Expr::I32Const(_) | Expr::I64Const(_) | Expr::F32Const(_) | Expr::F64Const(_) => true,
+            _ => false,
+        }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Block {
         statements: Vec<Expression>,
@@ -355,7 +373,7 @@ pub enum BinOp {
 pub enum MemSize {
     Byte,
     Word,
-    Float
+    Float,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
