@@ -56,6 +56,14 @@ Then run it on [MicroW8](https://exoticorn.github.io/microw8/v0.1pre2)
 */
 ```
 
+### Include
+
+Other sourcefiles can be included with the `include` top level statement:
+
+```
+include "platform_imports.cwa"
+```
+
 ### Types
 
 There are four types in WebAssembly and therefore CurlyWas:
@@ -137,6 +145,18 @@ An immutable global is probably of very limited use, as usually you'd most often
 can use it. However, exporting global variable is not yet supported in CurlyWas.
 
 The type is optional, if missing it is inferred from the init value.
+
+### Constants
+
+Constants can be declared in the global scope:
+
+```
+const name[: type] = value;
+```
+
+`value` has to be an expression evaluating to a constant value. It may reference other constants.
+
+The type is optional, but if given has to match the type of `value`.
 
 ### Functions
 
@@ -296,15 +316,65 @@ non-zero integer.
 
 #### Memory load/store
 
-To read from memory you specify a memory location as `base?offset` or `base!offset`. `?` reads a byte and `!` reads a 32bit word.
+To read from memory you specify a memory location as `base?offset`, `base!offset` or `base$offset`. `?` reads a byte, `!` reads a 32bit word
+and `$` reads a 32bit float.
 
 `base` can be any expression that evaluates to an `i32` while `offset` has to be a constant `i32` value. The effective memory address is the sum of both.
 
-Writing to memory looks just like an assignment to a memory location: `base?offset = expressoin` and `base!offset = expression`.
+Writing to memory looks just like an assignment to a memory location: `base?offset = expression`, `base!offset = expression` and `base$offset = expression`.
 
 When reading/writing 32bit words you need to make sure the address is 4-byte aligned.
 
-These compile to `i32.load8_u`, `i32.load`, `i32.store8` and `i32.store`. Other WASM load/store instructions will be implemented as intrinsics, but aren't yet. 
+These compile to `i32.load8_u`, `i32.load`, `f32.load`, `i32.store8`, `i32.store` and `f32.store`.
+
+In addition, all wasm memory instructions are available as intrinsics:
+
+```
+<load-ins>(<base-address>[, <offset>, [<align>]])
+
+offset defaults to 0, align to the natural alignment: 0 for 8bit loads, 1 for 16bit, 2 for 32 bit and 3 for 64bit.
+```
+
+with `<load-ins>` being one of `i32.load`, `i32.load8_u`, `i32.load8_s`, `i32.load16_u`, `i32.load16_s`,
+`i64.load`, `i64.load8_u`, `i64.load8_s`, `i64.load16_u`, `i64.load16_s`, `i32.load32_u`, `i32.load32_s`,
+`f32.load` and `f64.load`.
+
+```
+<store-ins>(<value>, <base-address>[, <offset>, [<align>]])
+
+offset and align defaults are the same as the load intrinsics.
+```
+with `<store-ins>` being one of `i32.store`, `i32.store8`, `i32.store16`, `i64.store`, `i64.store8`,
+`i64.store16`, `i64.store32`, `f32.store` and `f64.store`.
+
+#### Data
+
+Data sections are written in `data` blocks:
+
+```
+data <address> {
+    ...
+}
+```
+
+The content of such a block is loaded at the given address at module start.
+
+Inside the data block you can include 8, 16, 32, 64, f32 or f64 values:
+
+```
+i8(1, 255) i16(655350) i32(0x12345678) i64(0x1234567890abcdefi64) f32(1.0, 3.141) f64(0.5f64)
+```
+
+Strings:
+```
+"First line" i8(13, 10) "Second line"
+```
+
+And binary files:
+
+```
+file("font.bin")
+```
 
 #### Advanced sequencing
 

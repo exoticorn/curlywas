@@ -104,6 +104,17 @@ pub fn tc_script(script: &mut ast::Script, sources: &Sources) -> Result<()> {
         }
     }
 
+    for c in &mut script.consts {
+        tc_const(&mut c.value, sources)?;
+        if c.value.type_ != c.type_ {
+            if c.type_.is_some() {
+                result = type_mismatch(c.type_, &c.span, c.value.type_, &c.value.span, sources);
+            } else {
+                c.type_ = c.value.type_;
+            }
+        }
+    }
+
     for f in &script.functions {
         let params = f.params.iter().map(|(_, t)| *t).collect();
         if let Some(fnc) = context.functions.get(&f.name) {
