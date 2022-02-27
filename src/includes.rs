@@ -1,11 +1,15 @@
-use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::{collections::HashSet, fs::File};
 
 use crate::ast;
 use anyhow::{anyhow, Result};
 
-pub fn resolve_includes(script: &mut ast::Script, path: &Path) -> Result<()> {
+pub fn resolve_includes(
+    script: &mut ast::Script,
+    dependencies: &mut HashSet<PathBuf>,
+    path: &Path,
+) -> Result<()> {
     let script_dir = path.parent().expect("Script path has no parent");
     for data in &mut script.data {
         for values in &mut data.data {
@@ -21,6 +25,7 @@ pub fn resolve_includes(script: &mut ast::Script, path: &Path) -> Result<()> {
                         anyhow!("Failed to load data from {}: {}", full_path.display(), e)
                     })?
                     .read_to_end(data)?;
+                dependencies.insert(full_path);
             }
         }
     }

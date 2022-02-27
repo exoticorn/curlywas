@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use parser::Sources;
+use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod ast;
 mod constfold;
@@ -22,7 +23,14 @@ impl Options {
     }
 }
 
-pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<Vec<u8>> {
+pub struct CompiledModule {
+    pub wasm: Vec<u8>,
+    pub dependencies: Vec<PathBuf>,
+}
+
+pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<CompiledModule> {
+    let mut dependencies = HashSet::new();
+
     let path = path.as_ref();
     let mut script = ast::Script::default();
 
@@ -32,12 +40,13 @@ pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<Vec<u8>
     while let Some((path, span)) = pending_files.pop() {
         match sources.add(&path) {
             Ok((id, true)) => {
+                dependencies.insert(path.clone());
                 let mut new_script = match parser::parse(&sources, id) {
                     Ok(script) => script,
                     Err(_) => bail!("Parse failed"),
                 };
 
-                includes::resolve_includes(&mut new_script, &path)?;
+                includes::resolve_includes(&mut new_script, &mut dependencies, &path)?;
 
                 for include in std::mem::take(&mut new_script.includes) {
                     let mut path = path
@@ -76,5 +85,8 @@ pub fn compile_file<P: AsRef<Path>>(path: P, options: Options) -> Result<Vec<u8>
             .to_string_lossy(),
         &options,
     );
-    Ok(wasm)
+    Ok(CompiledModule {
+        wasm,
+        dependencies: dependencies.into_iter().collect(),
+    })
 }
