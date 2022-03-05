@@ -15,12 +15,12 @@ fn main() -> Result<()> {
 
     let mut filename = args.free_from_os_str::<PathBuf, bool>(|s| Ok(s.into()))?;
 
-    let module = compile_file(&filename, options)?;
+    let wasm = compile_file(&filename, options).0?;
 
-    wasmparser::validate(&module.wasm)?;
+    wasmparser::validate(&wasm)?;
 
     filename.set_extension("wasm");
-    File::create(filename)?.write_all(&module.wasm)?;
+    File::create(filename)?.write_all(&wasm)?;
 
     Ok(())
 }
