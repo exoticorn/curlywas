@@ -291,6 +291,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
         .repeated()
         .at_least(1)
         .or(just(':').chain(just('=')))
+        .or(just('!').chain(just('=')))
         .collect::<String>()
         .map(Token::Op);
 
