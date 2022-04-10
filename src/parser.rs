@@ -79,6 +79,7 @@ enum Token {
     Str(String),
     Int(i32),
     Int64(i64),
+    IntFloat(i32),
     Float(String),
     Float64(String),
     Op(String),
@@ -107,6 +108,7 @@ impl fmt::Display for Token {
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
             Token::Int64(v) => write!(f, "{}", v),
+            Token::IntFloat(v) => write!(f, "{}_f", v),
             Token::Float(v) => write!(f, "{}", v),
             Token::Float64(v) => write!(f, "{}", v),
             Token::Op(s) => write!(f, "{}", s),
@@ -275,6 +277,11 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
         .then_ignore(just("i64"))
         .map(|n| Token::Int64(n as i64));
 
+    let int_float = integer
+        .clone()
+        .then_ignore(just("_f"))
+        .map(|n| Token::IntFloat(n as i32));
+
     let int = integer.try_map(|n, span| {
         u32::try_from(n)
             .map(|n| Token::Int(n as i32))
@@ -334,6 +341,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
     let token = float
         .or(float64)
         .or(int64)
+        .or(int_float)
         .or(int)
         .or(str_)
         .or(op)
@@ -349,10 +357,10 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
 }
 
 fn map_token<O>(
-    f: impl Fn(&Token) -> Option<O> + 'static + Clone,
+    f: impl Fn(&Token, &Span) -> Option<O> + 'static + Clone,
 ) -> impl Parser<Token, O, Error = ScriptError> + Clone {
     filter_map(move |span, tok: Token| {
-        if let Some(output) = f(&tok) {
+        if let Some(output) = f(&tok, &span) {
             Ok(output)
         } else {
             Err(ScriptError::expected_input_found(
@@ -376,12 +384,12 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
     })
     .labelled("identifier");
 
-    let integer = map_token(|tok| match tok {
+    let integer = map_token(|tok, _| match tok {
         Token::Int(v) => Some(*v),
         _ => None,
     });
 
-    let string = map_token(|tok| match tok {
+    let string = map_token(|tok, _| match tok {
         Token::Str(s) => Some(s.clone()),
         _ => None,
     });
@@ -390,9 +398,13 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
     let block = recursive(|block| {
         let mut block_expression = None;
         let expression = recursive(|expression| {
-            let val = map_token(|tok| match tok {
+            let val = map_token(|tok, span| match tok {
                 Token::Int(v) => Some(ast::Expr::I32Const(*v)),
                 Token::Int64(v) => Some(ast::Expr::I64Const(*v)),
+                Token::IntFloat(v) => Some(ast::Expr::Cast {
+                    value: Box::new(ast::Expr::I32Const(*v).with_span(span.clone())),
+                    type_: ast::Type::F32,
+                }),
                 Token::Float(v) => Some(ast::Expr::F32Const(v.parse().unwrap())),
                 Token::Float64(v) => Some(ast::Expr::F64Const(v.parse().unwrap())),
                 _ => None,

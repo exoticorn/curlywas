@@ -140,6 +140,20 @@ fn fold_expr(context: &Context, expr: &mut ast::Expression) {
                 (ast::UnaryOp::Negate, ast::Expr::F64Const(value)) => {
                     Some(ast::Expr::F64Const(-*value))
                 }
+                (ast::UnaryOp::Negate, ast::Expr::Cast { value, type_ }) => {
+                    if let ast::Expr::I32Const(v) = value.expr {
+                        Some(ast::Expr::Cast {
+                            value: Box::new(ast::Expression {
+                                expr: ast::Expr::I32Const(-v),
+                                span: value.span.clone(),
+                                type_: value.type_,
+                            }),
+                            type_: *type_,
+                        })
+                    } else {
+                        None
+                    }
+                }
                 (ast::UnaryOp::Not, ast::Expr::I32Const(value)) => {
                     Some(ast::Expr::I32Const((*value == 0) as i32))
                 }
