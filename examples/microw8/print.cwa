@@ -1,0 +1,15 @@
+import "env.memory" memory(4);
+import "env.printString" fn printString(i32);
+import "env.printChar" fn printChar(i32);
+
+export fn upd() {
+    printChar(12);
+    printChar('Test');
+    printChar('\x1f\x10\x10');
+    printChar('abc\n');
+    printString(0);
+}
+
+data 0 {
+    "\x0e\x64\"Colors!!!\"\x0e\1\0"
+}

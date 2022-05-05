@@ -288,11 +288,32 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
             .map_err(|err| LexerError::custom(span, err.to_string()))
     });
 
-    let str_ = just('"')
-        .ignore_then(filter(|c| *c != '"').repeated())
-        .then_ignore(just('"'))
+    let str_ = just('\\')
+        .then(any())
+        .map(|t| vec![t.0, t.1])
+        .or(none_of("\"").map(|c| vec![c]))
+        .repeated()
+        .flatten()
+        .delimited_by(just('"'), just('"'))
         .collect::<String>()
-        .map(Token::Str);
+        .map(|s| Token::Str(parse_string_escapes(s)));
+
+    let char_ = just('\\')
+        .then(any())
+        .map(|t| vec![t.0, t.1])
+        .or(none_of("\'").map(|c| vec![c]))
+        .repeated()
+        .flatten()
+        .delimited_by(just('\''), just('\''))
+        .collect::<String>()
+        .map(|s| {
+            let s = parse_string_escapes(s);
+            let mut value = 0;
+            for (i, c) in s.chars().enumerate() {
+                value |= (c as u32) << (i * 8);
+            }
+            Token::Int(value as i32)
+        });
 
     let op = one_of("+-*/%&^|<=>#")
         .repeated()
@@ -344,6 +365,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
         .or(int_float)
         .or(int)
         .or(str_)
+        .or(char_)
         .or(op)
         .or(ctrl)
         .or(ident)
@@ -354,6 +376,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
         .padded()
         .padded_by(comment.padded().repeated())
         .repeated()
+        .boxed()
 }
 
 fn map_token<O>(
@@ -370,6 +393,48 @@ fn map_token<O>(
             ))
         }
     })
+}
+
+fn parse_string_escapes(s: String) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            result.push(c);
+        } else if let Some(c) = chars.next() {
+            match c {
+                '0' => result.push('\0'),
+                'n' => result.push('\n'),
+                'r' => result.push('\r'),
+                't' => result.push('\t'),
+                'x' => {
+                    if let Some(high) = chars.next() {
+                        if let Some(low) = chars.next() {
+                            if let Ok(c) = u8::from_str_radix(&format!("{}{}", high, low), 16) {
+                                result.push(c as char);
+                            } else {
+                                result.push('\\');
+                                result.push('x');
+                                result.push(high);
+                                result.push(low);
+                            }
+                        } else {
+                            result.push('\\');
+                            result.push('x');
+                            result.push(high);
+                        }
+                    } else {
+                        result.push('\\');
+                        result.push('x');
+                    }
+                }
+                other => result.push(other),
+            }
+        } else {
+            result.push('\\');
+        }
+    }
+    result
 }
 
 type ScriptError = Simple<Token, Span>;
