@@ -5,11 +5,20 @@ import "env.printChar" fn printChar(i32);
 export fn upd() {
     printChar(12);
     printChar('Test');
-    printChar('\x1f\x10\x10');
+    printChar('\1f\10\10');
     printChar('abc\n');
     printString(0);
+
+    let t = 32!32 / 1000 #% 3;
+    if t == 0 {
+        printChar('one');
+    } else if t == 1 {
+        printChar('two');
+    } else {
+        printChar('many');
+    }
 }
 
 data 0 {
-    "\x0e\x64\"Colors!!!\"\x0e\1\0"
+    "\0e\64\"Colors!!!\"\0e\1\r\n\0"
 }

@@ -310,7 +310,10 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
             let s = parse_string_escapes(s);
             let mut value = 0;
             for (i, c) in s.chars().enumerate() {
-                value |= (c as u32) << (i * 8);
+                // TODO: generate error on overflow
+                if i < 4 {
+                    value |= (c as u32) << (i * 8);
+                }
             }
             Token::Int(value as i32)
         });
@@ -397,37 +400,22 @@ fn map_token<O>(
 
 fn parse_string_escapes(s: String) -> String {
     let mut result = String::new();
-    let mut chars = s.chars();
+    let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
             result.push(c);
         } else if let Some(c) = chars.next() {
             match c {
-                '0' => result.push('\0'),
+                '0'..='9' | 'a'..='f' | 'A'..='F' => {
+                    let mut number = c.to_string();
+                    if let Some('0'..='9' | 'a' ..= 'f' | 'A'..='F') = chars.peek() {
+                        number.push(chars.next().unwrap());
+                    }
+                    result.push(u8::from_str_radix(&number, 16).unwrap() as char);
+                },
                 'n' => result.push('\n'),
                 'r' => result.push('\r'),
                 't' => result.push('\t'),
-                'x' => {
-                    if let Some(high) = chars.next() {
-                        if let Some(low) = chars.next() {
-                            if let Ok(c) = u8::from_str_radix(&format!("{}{}", high, low), 16) {
-                                result.push(c as char);
-                            } else {
-                                result.push('\\');
-                                result.push('x');
-                                result.push(high);
-                                result.push(low);
-                            }
-                        } else {
-                            result.push('\\');
-                            result.push('x');
-                            result.push(high);
-                        }
-                    } else {
-                        result.push('\\');
-                        result.push('x');
-                    }
-                }
                 other => result.push(other),
             }
         } else {
@@ -514,15 +502,25 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
                     block: Box::new(block),
                 });
 
-            let if_expr = just(Token::If)
-                .ignore_then(expression.clone())
-                .then(block.clone())
-                .then(just(Token::Else).ignore_then(block.clone()).or_not())
-                .map(|((condition, if_true), if_false)| ast::Expr::If {
-                    condition: Box::new(condition),
-                    if_true: Box::new(if_true),
-                    if_false: if_false.map(Box::new),
-                });
+            let if_expr = recursive::<_, ast::Expr, _, _, _>(|if_expr| {
+                just(Token::If)
+                    .ignore_then(expression.clone())
+                    .then(block.clone())
+                    .then(
+                        just(Token::Else)
+                            .ignore_then(
+                                block
+                                    .clone()
+                                    .or(if_expr.map_with_span(|expr, span| expr.with_span(span))),
+                            )
+                            .or_not(),
+                    )
+                    .map(|((condition, if_true), if_false)| ast::Expr::If {
+                        condition: Box::new(condition),
+                        if_true: Box::new(if_true),
+                        if_false: if_false.map(Box::new),
+                    })
+            });
 
             let block_expr = loop_expr.or(label_block_expr).or(if_expr).boxed();
 
