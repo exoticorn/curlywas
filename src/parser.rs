@@ -318,13 +318,27 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
             Token::Int(value as i32)
         });
 
-    let op = one_of("+-*/%&^|<=>#")
-        .repeated()
-        .at_least(1)
-        .or(just(':').chain(just('=')))
-        .or(just('!').chain(just('=')))
-        .collect::<String>()
-        .map(Token::Op);
+    let op = choice((
+        just("#/"),
+        just("#%"),
+        just("<<"),
+        just(">>"),
+        just("#>>"),
+        just("#<"),
+        just("#>"),
+        just(">="),
+        just("<="),
+        just("=="),
+        just("!="),
+        just("#>="),
+        just("#<="),
+        just("->"),
+        just(":="),
+    ))
+    .map(|s| s.to_string())
+    .or(one_of("+-*/%&^|<=>").map(|s: char| s.to_string()))
+    .map(Token::Op)
+    .boxed();
 
     let ctrl = one_of("(){};,:?!$").map(Token::Ctrl);
 
@@ -408,11 +422,11 @@ fn parse_string_escapes(s: String) -> String {
             match c {
                 '0'..='9' | 'a'..='f' | 'A'..='F' => {
                     let mut number = c.to_string();
-                    if let Some('0'..='9' | 'a' ..= 'f' | 'A'..='F') = chars.peek() {
+                    if let Some('0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
                         number.push(chars.next().unwrap());
                     }
                     result.push(u8::from_str_radix(&number, 16).unwrap() as char);
-                },
+                }
                 'n' => result.push('\n'),
                 'r' => result.push('\r'),
                 't' => result.push('\t'),
@@ -446,6 +460,28 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
         Token::Str(s) => Some(s.clone()),
         _ => None,
     });
+
+    let product_op = just(Token::Op("*".to_string()))
+        .to(ast::BinOp::Mul)
+        .or(just(Token::Op("/".to_string())).to(ast::BinOp::Div))
+        .or(just(Token::Op("#/".to_string())).to(ast::BinOp::DivU))
+        .or(just(Token::Op("%".to_string())).to(ast::BinOp::Rem))
+        .or(just(Token::Op("#%".to_string())).to(ast::BinOp::RemU))
+        .boxed();
+    let sum_op = just(Token::Op("+".to_string()))
+        .to(ast::BinOp::Add)
+        .or(just(Token::Op("-".to_string())).to(ast::BinOp::Sub))
+        .boxed();
+    let shift_op = just(Token::Op("<<".to_string()))
+        .to(ast::BinOp::Shl)
+        .or(just(Token::Op("#>>".to_string())).to(ast::BinOp::ShrU))
+        .or(just(Token::Op(">>".to_string())).to(ast::BinOp::ShrS))
+        .boxed();
+    let bit_op = just(Token::Op("&".to_string()))
+        .to(ast::BinOp::And)
+        .or(just(Token::Op("|".to_string())).to(ast::BinOp::Or))
+        .or(just(Token::Op("^".to_string())).to(ast::BinOp::Xor))
+        .boxed();
 
     let mut expression_out = None;
     let block = recursive(|block| {
@@ -723,16 +759,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
 
             let op_product = memory_op
                 .clone()
-                .then(
-                    just(Token::Op("*".to_string()))
-                        .to(ast::BinOp::Mul)
-                        .or(just(Token::Op("/".to_string())).to(ast::BinOp::Div))
-                        .or(just(Token::Op("#/".to_string())).to(ast::BinOp::DivU))
-                        .or(just(Token::Op("%".to_string())).to(ast::BinOp::Rem))
-                        .or(just(Token::Op("#%".to_string())).to(ast::BinOp::RemU))
-                        .then(memory_op.clone())
-                        .repeated(),
-                )
+                .then(product_op.clone().then(memory_op.clone()).repeated())
                 .foldl(|left, (op, right)| {
                     let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
@@ -746,13 +773,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
 
             let op_sum = op_product
                 .clone()
-                .then(
-                    just(Token::Op("+".to_string()))
-                        .to(ast::BinOp::Add)
-                        .or(just(Token::Op("-".to_string())).to(ast::BinOp::Sub))
-                        .then(op_product.clone())
-                        .repeated(),
-                )
+                .then(sum_op.clone().then(op_product.clone()).repeated())
                 .foldl(|left, (op, right)| {
                     let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
@@ -766,14 +787,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
 
             let op_shift = op_sum
                 .clone()
-                .then(
-                    just(Token::Op("<<".to_string()))
-                        .to(ast::BinOp::Shl)
-                        .or(just(Token::Op("#>>".to_string())).to(ast::BinOp::ShrU))
-                        .or(just(Token::Op(">>".to_string())).to(ast::BinOp::ShrS))
-                        .then(op_sum.clone())
-                        .repeated(),
-                )
+                .then(shift_op.clone().then(op_sum.clone()).repeated())
                 .foldl(|left, (op, right)| {
                     let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
@@ -815,14 +829,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
 
             let op_bit = op_cmp
                 .clone()
-                .then(
-                    just(Token::Op("&".to_string()))
-                        .to(ast::BinOp::And)
-                        .or(just(Token::Op("|".to_string())).to(ast::BinOp::Or))
-                        .or(just(Token::Op("^".to_string())).to(ast::BinOp::Xor))
-                        .then(op_cmp.clone())
-                        .repeated(),
-                )
+                .then(bit_op.clone().then(op_cmp.clone()).repeated())
                 .foldl(|left, (op, right)| {
                     let span = (left.span.0, left.span.1.start..right.span.1.end);
                     ast::Expr::BinOp {
@@ -867,11 +874,45 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             .map_with_span(|expr, span| expr.with_span(span))
             .boxed();
 
+        let assign_op = identifier
+            .then(
+                product_op
+                    .clone()
+                    .or(sum_op.clone())
+                    .or(shift_op.clone())
+                    .or(bit_op.clone()),
+            )
+            .then_ignore(just(Token::Op("=".to_string())))
+            .then(expression.clone())
+            .map_with_span(|((name, op), value), span| {
+                ast::Expr::Assign {
+                    name: name.clone(),
+                    value: Box::new(
+                        ast::Expr::BinOp {
+                            left: Box::new(
+                                ast::Expr::Variable {
+                                    name,
+                                    local_id: None,
+                                }
+                                .with_span(span.clone()),
+                            ),
+                            right: Box::new(value),
+                            op,
+                        }
+                        .with_span(span.clone()),
+                    ),
+                    local_id: None,
+                }
+                .with_span(span)
+            })
+            .boxed();
+
         block_expression
             .clone()
             .then(just(Token::Ctrl(';')).or_not())
             .map_with_span(|(expr, semi), span| (expr.with_span(span), semi.is_none()))
             .or(assign
+                .or(assign_op)
                 .or(expression.clone())
                 .then(just(Token::Ctrl(';')).to(false)))
             .repeated()

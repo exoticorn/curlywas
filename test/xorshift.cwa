@@ -6,3 +6,10 @@ fn xorshift(x: i32) -> i32 {
     let inline x = x ^ (x << 5);
     x
 }
+
+fn xorshift2(x: i32) -> i32 {
+    x ^= x << 13;
+    x ^= x #>> 17;
+    x ^= x << 5;
+    x
+}
