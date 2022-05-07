@@ -376,17 +376,10 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
 
     let comment = single_line.or(multi_line);
 
-    let token = float
-        .or(float64)
-        .or(int64)
-        .or(int_float)
-        .or(int)
-        .or(str_)
-        .or(char_)
-        .or(op)
-        .or(ctrl)
-        .or(ident)
-        .recover_with(skip_then_retry_until([]));
+    let token = choice((
+        float, float64, int64, int_float, int, str_, char_, op, ctrl, ident,
+    ))
+    .recover_with(skip_then_retry_until([]));
 
     token
         .map_with_span(|tok, span| (tok, span))
@@ -522,6 +515,36 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
                 })
                 .boxed();
 
+            let local_tee_op = identifier
+                .then(
+                    product_op
+                        .clone()
+                        .or(sum_op.clone())
+                        .or(shift_op.clone())
+                        .or(bit_op.clone()),
+                )
+                .then_ignore(just(Token::Op(":=".to_string())))
+                .then(expression.clone())
+                .map_with_span(|((name, op), expr), span| ast::Expr::LocalTee {
+                    name: name.clone(),
+                    value: Box::new(
+                        ast::Expr::BinOp {
+                            left: Box::new(
+                                ast::Expr::Variable {
+                                    name,
+                                    local_id: None,
+                                }
+                                .with_span(span.clone()),
+                            ),
+                            right: Box::new(expr),
+                            op,
+                        }
+                        .with_span(span),
+                    ),
+                    local_id: None,
+                })
+                .boxed();
+
             let loop_expr = just(Token::Loop)
                 .ignore_then(identifier)
                 .then(block.clone())
@@ -632,28 +655,31 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
                     value: value.map(Box::new),
                 });
 
-            let atom = val
-                .or(function_call)
-                .or(local_tee)
-                .or(variable)
-                .or(block_expr)
-                .or(branch)
-                .or(branch_if)
-                .or(let_)
-                .or(select)
-                .or(return_)
-                .map_with_span(|expr, span| expr.with_span(span))
-                .or(expression
-                    .clone()
-                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))))
-                .or(block)
-                .recover_with(nested_delimiters(
-                    Token::Ctrl('('),
-                    Token::Ctrl(')'),
-                    [(Token::Ctrl('{'), Token::Ctrl('}'))],
-                    |span| ast::Expr::Error.with_span(span),
-                ))
-                .boxed();
+            let atom = choice((
+                val,
+                function_call,
+                local_tee,
+                local_tee_op,
+                variable,
+                block_expr,
+                branch,
+                branch_if,
+                let_,
+                select,
+                return_,
+            ))
+            .map_with_span(|expr, span| expr.with_span(span))
+            .or(expression
+                .clone()
+                .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))))
+            .or(block)
+            .recover_with(nested_delimiters(
+                Token::Ctrl('('),
+                Token::Ctrl(')'),
+                [(Token::Ctrl('{'), Token::Ctrl('}'))],
+                |span| ast::Expr::Error.with_span(span),
+            ))
+            .boxed();
 
             let unary_op = just(Token::Op("-".to_string()))
                 .to(ast::UnaryOp::Negate)
