@@ -18,14 +18,14 @@ fn rng(state: i32) -> i32 {
 }
 
 fn set_color(color: i32) -> i32 {
-    ?20 = color;
+    0?20 = color;
     6
 }
 
 export fn update() {
     let y: i32;
     let score = pz;
-    let lazy pad = ?22;
+    let lazy pad = 0?22;
     let lazy zero = 0.0;
 
     let lazy control_speed = 0.03;
@@ -33,7 +33,7 @@ export fn update() {
     f = f * 0.7;
 
     loop lines {
-        ?(8003-y) = (score := score / 10) % 10 + 48;
+        (8003-y)?0 = (score := score / 10) % 10 + 48;
         let lazy z = (4000 / (y := y + 1) + pz) / 20;
         let lazy x = (rng(rng(rng(rng(z)))) >> 30) as f32 - px;
         let lazy w = 9 as f32 / sqrt(z as f32);

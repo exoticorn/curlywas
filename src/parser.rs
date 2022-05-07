@@ -334,6 +334,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
         just("#>"),
         just("->"),
         just(":="),
+        just("<|"),
     ))
     .map(|s| s.to_string())
     .or(one_of("+-*/%&^|<=>").map(|s: char| s.to_string()))
