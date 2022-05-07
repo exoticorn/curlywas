@@ -1,0 +1,8 @@
+// simple test to see whether lazy/inline chains with the same variable compile correctly
+
+fn xorshift(x: i32) -> i32 {
+    let lazy x = x ^ (x << 13);
+    let lazy x = x ^ (x #>> 17);
+    let inline x = x ^ (x << 5);
+    x
+}

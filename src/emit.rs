@@ -289,7 +289,7 @@ struct FunctionContext<'a> {
     functions: &'a HashMap<String, u32>,
     locals: &'a ast::Locals,
     labels: Vec<String>,
-    let_values: HashMap<u32, (&'a ast::Expression, ast::LetType)>,
+    let_values: HashMap<u32, Vec<(&'a ast::Expression, ast::LetType)>>,
     intrinsics: &'a Intrinsics,
 }
 
@@ -385,7 +385,10 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                             .instruction(&Instruction::LocalSet(local.index.unwrap()));
                     }
                     ast::LetType::Lazy | ast::LetType::Inline => {
-                        ctx.let_values.insert(local_id.unwrap(), (value, *let_type));
+                        ctx.let_values
+                            .entry(local_id.unwrap())
+                            .or_default()
+                            .push((value, *let_type));
                     }
                 }
             }
@@ -612,17 +615,17 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         }
         ast::Expr::Variable { name, local_id } => {
             if let &Some(id) = local_id {
-                if let Some((expr, let_type)) = ctx.let_values.get(&id) {
+                if let Some((expr, let_type)) = ctx.let_values.get_mut(&id).and_then(|s| s.pop()) {
                     match let_type {
                         ast::LetType::Lazy => {
-                            let expr = ctx.let_values.remove(&id).unwrap().0;
                             emit_expression(ctx, expr);
+                            ctx.let_values.get_mut(&id).unwrap().clear();
                             ctx.function
                                 .instruction(&Instruction::LocalTee(ctx.locals[id].index.unwrap()));
                         }
                         ast::LetType::Inline => {
-                            let expr = *expr;
                             emit_expression(ctx, expr);
+                            ctx.let_values.get_mut(&id).unwrap().push((expr, let_type));
                         }
                         _ => unreachable!(),
                     }
