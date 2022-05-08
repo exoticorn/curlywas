@@ -250,23 +250,23 @@ fn report_errors(errors: Vec<Simple<String, Span>>, sources: &Sources) {
 
 type LexerError = Simple<char, Span>;
 fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
-    let float64 = text::int(10)
+    let float64 = text::digits(10)
         .chain::<char, _, _>(just('.').chain(text::digits(10)))
         .then_ignore(just("f64"))
         .collect::<String>()
         .map(Token::Float64);
 
-    let float = text::int(10)
+    let float = text::digits(10)
         .chain::<char, _, _>(just('.').chain(text::digits(10)))
         .collect::<String>()
         .map(Token::Float);
 
     let integer = just::<_, _, LexerError>("0x")
-        .ignore_then(text::int(16))
+        .ignore_then(text::digits(16))
         .try_map(|n, span| {
             u64::from_str_radix(&n, 16).map_err(|err| LexerError::custom(span, err.to_string()))
         })
-        .or(text::int(10).try_map(|n: String, span: Span| {
+        .or(text::digits(10).try_map(|n: String, span: Span| {
             n.parse::<u64>()
                 .map_err(|err| LexerError::custom(span, err.to_string()))
         }))

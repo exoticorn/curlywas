@@ -89,15 +89,24 @@ For floating point numbers, only the most basic decimal format is currently impl
 0.464, 3.141, -10.0
 ```
 
-String literals exist in a very basic form. No escape character implemented yet.
+String literals are used for include paths, import names and as literal strings in the data section. The following escapes are supported:
+| Escape | Result | Comment                            |
+| `\"`   | `"`    |                                    |
+| `\'`   | `'`    |                                    |
+| `\t`   | 8      |                                    |
+| `\n`   | 10     |                                    |
+| `\r`   | 13     |                                    |
+| `\N`   | 0x0N   | (Can't be followed by a hex digit) |
+| `\NN`  | 0xNN   |                                    |
 
 ```
 "env.memory", "Hello World!"
 
-this does not work, yet:
-
 "one line\nsecond line", "They said: \"Enough!\""
 ```
+
+Character literals are enclosed in single quotes `'` and support the same escapes as strings. They can contain up to 4 characters and evaluate to the
+little-endian representation of these characters. For examples: `'A'` evaluates to `0x41`, `'hi'` evaluates to 0x6968, and `'Crly'` to 0x7a6c7243.
 
 ### Imports
 
@@ -295,6 +304,9 @@ So for example this block evaluates to 12:
 
 Blocks are used as function bodies and in flow control (`if`, `block`, `loop`), but can also used at any point inside an expression.
 
+Variable re-assignments of the form `name = name <op> expression` can be shortened to `name <op>= expression`, for example `x += 1` to increment `x` by one. This works for all arithmetic, bit and shift operators.
+The same is allowed for `name := name <op> expression`, ie. `x +:= 1` increments `x` and returns the new value.
+
 #### Flow control
 
 `if condition_expression { if_true_block } [else {if_false_block}]` executes the `if_true_block` if the condition evaluates to a non-zero integer and
@@ -302,6 +314,17 @@ the `if_false_block` otherwise (if it exists). It can also be used as an express
 
 ```
 let a = if 0 { 2 } else { 3 }; // assigns 3 to a
+```
+
+If the `if_false_block` contains exactly one `if` expression or statement you may omit the curly braces, writing `else if` chains like:
+```
+if x == 0 {
+    doOneThing()
+} else if x == 1 {
+    doThatOtherThing()
+} else {
+    keepWaiting()
+}
 ```
 
 `block name { ... }` opens a named block scope. A branch statement can be used to jump to the end of the block. Currently, `block` can only be used
