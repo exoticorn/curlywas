@@ -281,7 +281,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
 
     let int128 = integer
         .clone()
-        .then_ignore(just("v128"))
+        .then_ignore(just("i128"))
         .map(|n| Token::Int128(n as i128));
 
     let int_float = integer
