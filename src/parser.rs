@@ -79,8 +79,8 @@ enum Token {
     Str(String),
     Int(i32),
     Int64(i64),
-    IntFloat(i32),
     Int128(i128),
+    IntFloat(i32),
     Float(String),
     Float64(String),
     Op(String),
@@ -266,10 +266,10 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
     let integer = just::<_, _, LexerError>("0x")
         .ignore_then(text::digits(16))
         .try_map(|n, span| {
-            u64::from_str_radix(&n, 16).map_err(|err| LexerError::custom(span, err.to_string()))
+            u128::from_str_radix(&n, 16).map_err(|err| LexerError::custom(span, err.to_string()))
         })
         .or(text::digits(10).try_map(|n: String, span: Span| {
-            n.parse::<u64>()
+            n.parse::<u128>()
                 .map_err(|err| LexerError::custom(span, err.to_string()))
         }))
         .boxed();
