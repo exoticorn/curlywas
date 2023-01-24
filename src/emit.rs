@@ -714,13 +714,14 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 ctx.function
                     .instruction(&mem_instruction(load, &params[1..]));
             } else if let Some(load_lane) = ctx.intrinsics.find_load_lane(name) {
+                emit_expression(ctx, &params[2]);
+                emit_expression(ctx, &params[0]);
                 let lane = params
-                    .get(0)
+                    .get(1)
                     .map(|e| e.const_i32() as u8)
                     .unwrap();
-                emit_expression(ctx, &params[1]);
                 ctx.function
-                    .instruction(&mem_lane_instruction(load_lane, lane, &params[2..]));
+                    .instruction(&mem_lane_instruction(load_lane, lane, &params[3..]));
             } else if let Some(store) = ctx.intrinsics.find_store(name) {
                 emit_expression(ctx, &params[1]);
                 emit_expression(ctx, &params[0]);

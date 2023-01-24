@@ -445,12 +445,11 @@ impl Intrinsics {
 
     pub fn find_load_lane(&self, name: &str) -> Option<MemLaneInstruction> {
         use enc::Instruction as I;
-        use Type::*;
         let ins = match name {
-            "v128.load8_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Load8Lane { memarg: memarg, lane: lane }, 0),
-            "v128.load16_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Load16Lane { memarg: memarg, lane: lane }, 1),
-            "v128.load32_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Load32Lane { memarg: memarg, lane: lane }, 2),
-            "v128.load64_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Load64Lane { memarg: memarg, lane: lane }, 3),
+            "v128.load8_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load8Lane { memarg: memarg, lane: lane }, 0),
+            "v128.load16_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load16Lane { memarg: memarg, lane: lane }, 1),
+            "v128.load32_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load32Lane { memarg: memarg, lane: lane }, 2),
+            "v128.load64_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load64Lane { memarg: memarg, lane: lane }, 3),
             _ => return None,
         };
         return Some(ins);
@@ -477,12 +476,11 @@ impl Intrinsics {
 
     pub fn find_store_lane(&self, name: &str) -> Option<MemLaneInstruction> {
         use enc::Instruction as I;
-        use Type::*;
         let ins = match name {
-            "v128.store8_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Store8Lane { memarg: memarg, lane: lane }, 0),
-            "v128.store16_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Store16Lane { memarg: memarg, lane: lane }, 1),
-            "v128.store32_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Store32Lane { memarg: memarg, lane: lane }, 2),
-            "v128.store64_lane" => MemLaneInstruction::new(V128, |memarg, lane| I::V128Store64Lane { memarg: memarg, lane: lane }, 3),
+            "v128.store8_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store8Lane { memarg: memarg, lane: lane }, 0),
+            "v128.store16_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store16Lane { memarg: memarg, lane: lane }, 1),
+            "v128.store32_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store32Lane { memarg: memarg, lane: lane }, 2),
+            "v128.store64_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store64Lane { memarg: memarg, lane: lane }, 3),
             _ => return None,
         };
         return Some(ins);
@@ -533,19 +531,16 @@ impl MemInstruction {
 }
 
 pub struct MemLaneInstruction {
-    pub type_: Type,
     pub instruction: fn(MemArg, Lane) -> enc::Instruction<'static>,
     pub natural_alignment: u32,
 }
 
 impl MemLaneInstruction {
     fn new(
-        type_: Type,
         instruction: fn(MemArg, Lane) -> enc::Instruction<'static>,
         natural_alignment: u32,
     ) -> MemLaneInstruction {
         MemLaneInstruction {
-            type_,
             instruction,
             natural_alignment,
         }
