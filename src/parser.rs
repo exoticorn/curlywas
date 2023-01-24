@@ -80,6 +80,7 @@ enum Token {
     Int(i32),
     Int64(i64),
     IntFloat(i32),
+    Int128(i128),
     Float(String),
     Float64(String),
     Op(String),
@@ -108,6 +109,7 @@ impl fmt::Display for Token {
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
             Token::Int64(v) => write!(f, "{}", v),
+            Token::Int128(v) => write!(f, "{}", v),
             Token::IntFloat(v) => write!(f, "{}_f", v),
             Token::Float(v) => write!(f, "{}", v),
             Token::Float64(v) => write!(f, "{}", v),
@@ -277,6 +279,11 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
         .then_ignore(just("i64"))
         .map(|n| Token::Int64(n as i64));
 
+    let int128 = integer
+        .clone()
+        .then_ignore(just("v128"))
+        .map(|n| Token::Int128(n as i128));
+
     let int_float = integer
         .clone()
         .then_ignore(just("_f"))
@@ -378,7 +385,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
     let comment = single_line.or(multi_line);
 
     let token = choice((
-        float, float64, int64, int_float, int, str_, char_, op, ctrl, ident,
+        float, float64, int64, int128, int_float, int, str_, char_, op, ctrl, ident,
     ))
     .recover_with(skip_then_retry_until([]));
 
@@ -484,6 +491,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             let val = map_token(|tok, span| match tok {
                 Token::Int(v) => Some(ast::Expr::I32Const(*v)),
                 Token::Int64(v) => Some(ast::Expr::I64Const(*v)),
+                Token::Int128(v) => Some(ast::Expr::V128Const(*v)),
                 Token::IntFloat(v) => Some(ast::Expr::Cast {
                     value: Box::new(ast::Expr::I32Const(*v).with_span(span.clone())),
                     type_: ast::Type::F32,
@@ -1167,6 +1175,7 @@ fn type_parser() -> impl Parser<Token, ast::Type, Error = ScriptError> + Clone {
         Token::Ident(id) if id == "i64" => Ok(ast::Type::I64),
         Token::Ident(id) if id == "f32" => Ok(ast::Type::F32),
         Token::Ident(id) if id == "f64" => Ok(ast::Type::F64),
+        Token::Ident(id) if id == "v128" => Ok(ast::Type::V128),
         _ => Err(ScriptError::expected_input_found(
             span,
             vec![
@@ -1174,6 +1183,7 @@ fn type_parser() -> impl Parser<Token, ast::Type, Error = ScriptError> + Clone {
                 Some(Token::Ident("i64".into())),
                 Some(Token::Ident("f32".into())),
                 Some(Token::Ident("f64".into())),
+                Some(Token::Ident("v128".into())),
             ],
             Some(tok),
         )),

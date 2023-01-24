@@ -8,7 +8,7 @@ use wasm_encoder::{
 
 use crate::{
     ast,
-    intrinsics::{Intrinsics, MemInstruction},
+    intrinsics::{Intrinsics, MemInstruction, MemLaneInstruction, LaneInstruction},
     Options,
 };
 
@@ -279,6 +279,7 @@ fn const_instr(expr: &ast::Expression) -> Instruction {
         ast::Expr::F32Const(v) => Instruction::F32Const(v),
         ast::Expr::I64Const(v) => Instruction::I64Const(v),
         ast::Expr::F64Const(v) => Instruction::F64Const(v),
+        ast::Expr::V128Const(v) => Instruction::V128Const(v),
         _ => unreachable!(),
     }
 }
@@ -437,6 +438,7 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                     emit_expression(ctx, value);
                     ctx.function.instruction(&Instruction::F64Neg);
                 }
+                (V128, Negate) => unreachable!(),
                 (I32, Not) => {
                     emit_expression(ctx, value);
                     ctx.function.instruction(&Instruction::I32Eqz);
@@ -533,6 +535,8 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 (F64, Le) => Instruction::F64Le,
                 (F64, Gt) => Instruction::F64Gt,
                 (F64, Ge) => Instruction::F64Ge,
+
+                (V128, _) => unreachable!(),
             });
         }
         ast::Expr::Branch(label) => {
@@ -571,6 +575,9 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
         }
         ast::Expr::F64Const(v) => {
             ctx.function.instruction(&Instruction::F64Const(*v));
+        }
+        ast::Expr::V128Const(v) => {
+            ctx.function.instruction(&Instruction::V128Const(*v));
         }
         ast::Expr::Assign {
             name,
@@ -657,7 +664,8 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 (F32, F64) => Some(Instruction::F64PromoteF32),
                 (F64, F32) => Some(Instruction::F32DemoteF64),
 
-                (I32, I32) | (I64, I64) | (F32, F32) | (F64, F64) => None,
+                (I32, I32) | (I64, I64) | (F32, F32) | (F64, F64) | (V128, V128) => None,
+                (V128, _) | (_, V128) => unreachable!(),
             };
             if let Some(inst) = inst {
                 ctx.function.instruction(&inst);
@@ -679,15 +687,65 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                     memory_index: 0,
                 })
             }
+            fn mem_lane_instruction(
+                inst: MemLaneInstruction,
+                lane: u8,
+                params: &[ast::Expression],
+            ) -> Instruction<'static> {
+                let offset = params
+                    .get(0)
+                    .map(|e| e.const_i32() as u32 as u64)
+                    .unwrap_or(0);
+                let alignment = params.get(1).map(|e| e.const_i32() as u32);
+                (inst.instruction)(MemArg {
+                    offset,
+                    align: alignment.unwrap_or(inst.natural_alignment),
+                    memory_index: 0,
+                }, lane)
+            }
+            fn lane_instruction(
+                inst: LaneInstruction,
+                lane: u8
+            ) -> Instruction<'static> {
+                (inst.instruction)(lane)
+            }
             if let Some(load) = ctx.intrinsics.find_load(name) {
                 emit_expression(ctx, &params[0]);
                 ctx.function
                     .instruction(&mem_instruction(load, &params[1..]));
+            } else if let Some(load_lane) = ctx.intrinsics.find_load_lane(name) {
+                let lane = params
+                    .get(0)
+                    .map(|e| e.const_i32() as u8)
+                    .unwrap();
+                emit_expression(ctx, &params[1]);
+                ctx.function
+                    .instruction(&mem_lane_instruction(load_lane, lane, &params[2..]));
             } else if let Some(store) = ctx.intrinsics.find_store(name) {
                 emit_expression(ctx, &params[1]);
                 emit_expression(ctx, &params[0]);
                 ctx.function
                     .instruction(&mem_instruction(store, &params[2..]));
+            } else if let Some(store_lane) = ctx.intrinsics.find_store_lane(name) {
+                emit_expression(ctx, &params[2]);
+                emit_expression(ctx, &params[0]);
+                let lane = params
+                    .get(1)
+                    .map(|e| e.const_i32() as u8)
+                    .unwrap();
+                ctx.function
+                    .instruction(&mem_lane_instruction(store_lane, lane, &params[3..]));
+            } else if let Some(lane_instr) = ctx.intrinsics.find_lane(name) {
+                emit_expression(ctx, &params[0]);
+                let lane = params
+                    .get(1)
+                    .map(|e| e.const_i32() as u8)
+                    .unwrap();
+                if let Some(_) = lane_instr.param_type {
+                    emit_expression(ctx, &params[2]);
+                }
+                ctx.function
+                    .instruction(&lane_instruction(lane_instr, lane));
             } else {
                 for param in params {
                     emit_expression(ctx, param);
@@ -762,6 +820,7 @@ fn map_type(t: ast::Type) -> ValType {
         ast::Type::I64 => ValType::I64,
         ast::Type::F32 => ValType::F32,
         ast::Type::F64 => ValType::F64,
+        ast::Type::V128 => ValType::V128,
     }
 }
 
