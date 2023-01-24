@@ -1018,6 +1018,7 @@ fn tc_lane(lane_width: u32, context: &mut Context, param: &mut ast::Expression, 
     if param.type_ != Some(I32) {
         return type_mismatch(Some(I32), &span, param.type_, &param.span, context.sources);
     }
+    tc_const(param, context.sources)?;
     let lane = param.const_i32();
     let max_lane = (16 >> lane_width) - 1;
     if lane < 0 || lane > max_lane {
