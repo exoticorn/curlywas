@@ -177,6 +177,7 @@ pub enum DataType {
     I16,
     I32,
     I64,
+    I128,
     F32,
     F64,
 }
@@ -208,6 +209,13 @@ impl Expression {
         match self.expr {
             Expr::I64Const(v) => v,
             _ => panic!("Expected I64Const"),
+        }
+    }
+
+    pub fn const_v128(&self) -> i128 {
+        match self.expr {
+            Expr::V128Const(v) => v,
+            _ => panic!("Expected V128Const"),
         }
     }
 

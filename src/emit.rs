@@ -146,6 +146,7 @@ pub fn emit(script: &ast::Script, module_name: &str, options: &Options) -> Vec<u
                             ast::DataType::I16 => 2,
                             ast::DataType::I32 => 4,
                             ast::DataType::I64 => 8,
+                            ast::DataType::I128 => 16,
                             ast::DataType::F32 => 4,
                             ast::DataType::F64 => 8,
                         };
@@ -161,6 +162,8 @@ pub fn emit(script: &ast::Script, module_name: &str, options: &Options) -> Vec<u
                                     .extend_from_slice(&(value.const_i32() as u32).to_le_bytes()),
                                 ast::DataType::I64 => segment_data
                                     .extend_from_slice(&(value.const_i64() as u64).to_le_bytes()),
+                                ast::DataType::I128 => segment_data
+                                    .extend_from_slice(&(value.const_v128() as u128).to_le_bytes()),
                                 ast::DataType::F32 => {
                                     segment_data.extend_from_slice(&value.const_f32().to_le_bytes())
                                 }

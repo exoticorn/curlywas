@@ -231,6 +231,7 @@ pub fn tc_script(script: &mut ast::Script, sources: &Sources) -> Result<()> {
                             ast::Type::I32
                         }
                         ast::DataType::I64 => ast::Type::I64,
+                        ast::DataType::I128 => ast::Type::V128,
                         ast::DataType::F32 => ast::Type::F32,
                         ast::DataType::F64 => ast::Type::F64,
                     };

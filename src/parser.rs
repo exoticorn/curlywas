@@ -1099,6 +1099,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             .or(just(Token::Ident("i16".to_string())).to(ast::DataType::I16))
             .or(just(Token::Ident("i32".to_string())).to(ast::DataType::I32))
             .or(just(Token::Ident("i64".to_string())).to(ast::DataType::I64))
+            .or(just(Token::Ident("i128".to_string())).to(ast::DataType::I128))
             .or(just(Token::Ident("f32".to_string())).to(ast::DataType::F32))
             .or(just(Token::Ident("f64".to_string())).to(ast::DataType::F64))
             .then(
