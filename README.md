@@ -408,7 +408,7 @@ file("font.bin")
 
 #### SIMD
 
-Intrinsics are available for all WASM SIMD instructions, except for `i8x16.shuffle` and the relaxed SIMD extensions.
+Intrinsics are available for all WASM SIMD instructions, except for the relaxed SIMD extensions.
 For instructions that refer to lanes, i.e. `*.extract_lane*`, `*.replace_lane`, `v128.store*_lane`, and
 `v128.load*_lane`, the lane number follows the vector argument. For example:
 
@@ -418,6 +418,14 @@ v128.load32_splat(<v128_value>, <lane>, <base-address>[, <offset>, [<align>]]);
 i32x4.extract_lane(<v128_value>, <lane>);
 i32x4.replace_lane(<v128_value>, <lane>, <i32_value>);
 ```
+
+The format for `i8x16.shuffle` is:
+
+```
+i8x16.shuffle(<v128_a>, <v128_b>, [<lane_0>[, <lane_1>[, ... <lane_16>]]])
+```
+
+Omitted lane arguments default to their index, so providing no lane arguments simply returns the value of `<v128_a>`.
 
 #### Advanced sequencing
 

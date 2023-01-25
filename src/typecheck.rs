@@ -737,7 +737,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     return report_error("Missing parameters", &expr.span, context.sources);
                 }
                 if let Some(value) = params.get_mut(1) {
-                    tc_lane(load_lane.lane_width, context, value, &expr.span)?;
+                    tc_lane(load_lane.num_lanes, context, value, &expr.span)?;
                 } else {
                     return report_error("Missing parameters", &expr.span, context.sources);
                 }
@@ -776,7 +776,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     return report_error("Missing parameters", &expr.span, context.sources);
                 }
                 if let Some(value) = params.get_mut(1) {
-                    tc_lane(store_lane.lane_width, context, value, &expr.span)?;
+                    tc_lane(store_lane.num_lanes, context, value, &expr.span)?;
                 } else {
                     return report_error("Missing parameters", &expr.span, context.sources);
                 }
@@ -798,7 +798,7 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     return report_error("Missing parameters", &expr.span, context.sources);
                 }
                 if let Some(value) = params.get_mut(1) {
-                    tc_lane(lane_instr.lane_width, context, value, &expr.span)?;
+                    tc_lane(lane_instr.num_lanes, context, value, &expr.span)?;
                 } else {
                     return report_error("Missing parameters", &expr.span, context.sources);
                 }
@@ -819,6 +819,28 @@ fn tc_expression(context: &mut Context, expr: &mut ast::Expression) -> Result<()
                     }
                 }
                 Some(lane_instr.return_type)
+            } else if let Some(_) = context.intrinsics.find_shuffle(name) {
+                for i in 0..2 {
+                    if let Some(value) = params.get_mut(i) {
+                        tc_expression(context, value)?;
+                        if value.type_ != Some(V128) {
+                            type_mismatch(
+                                Some(V128),
+                                &expr.span,
+                                value.type_,
+                                &value.span,
+                                context.sources,
+                            )?;
+                        }
+                    } else {
+                        return report_error("Missing parameters", &expr.span, context.sources);
+                    }
+                }
+                if params.len() > 18 {
+                    return report_error("Too many parameters", &expr.span, context.sources);
+                }
+                (&mut params[2..]).into_iter().map(|p| tc_lane(32, context, p, &expr.span)).collect::<Result<()>>()?;
+                Some(V128)
             } else if let Some(type_map) = context
                 .functions
                 .get(name)
@@ -1015,16 +1037,15 @@ fn tc_memarg(context: &mut Context, params: &mut [ast::Expression], span: &Span)
     Ok(())
 }
 
-fn tc_lane(lane_width: u32, context: &mut Context, param: &mut ast::Expression, span: &Span) -> Result<()> {
+fn tc_lane(num_lanes: u32, context: &mut Context, param: &mut ast::Expression, span: &Span) -> Result<()> {
     if param.type_ != Some(I32) {
         return type_mismatch(Some(I32), &span, param.type_, &param.span, context.sources);
     }
     tc_const(param, context.sources)?;
     let lane = param.const_i32();
-    let max_lane = (16 >> lane_width) - 1;
-    if lane < 0 || lane > max_lane {
+    if lane < 0 || (lane as u32) >= num_lanes {
         return report_error(
-            &format!("Lane {} out of range (0-{})", lane, max_lane),
+            &format!("Lane {} out of range (0-{})", lane, num_lanes-1),
             &param.span,
             context.sources,
         );

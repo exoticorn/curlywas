@@ -8,7 +8,7 @@ use wasm_encoder::{
 
 use crate::{
     ast,
-    intrinsics::{Intrinsics, MemInstruction, MemLaneInstruction, LaneInstruction},
+    intrinsics::{Intrinsics, LaneInstruction, MemInstruction, MemLaneInstruction, ShuffleInstruction},
     Options,
 };
 
@@ -712,6 +712,16 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
             ) -> Instruction<'static> {
                 (inst.instruction)(lane)
             }
+            fn shuffle_instruction(
+                inst: ShuffleInstruction,
+                instr_lanes: &[ast::Expression],
+            ) -> Instruction<'static> {
+                let mut lanes: [u8; 16] = [0; 16];
+                for (elem, i) in lanes.iter_mut().zip(0..16) {
+                    *elem = instr_lanes.get(i).map(|e| e.const_i32() as u8).unwrap_or(i as u8);
+                }
+                (inst.instruction)(lanes)
+            }
             if let Some(load) = ctx.intrinsics.find_load(name) {
                 emit_expression(ctx, &params[0]);
                 ctx.function
@@ -750,6 +760,11 @@ fn emit_expression<'a>(ctx: &mut FunctionContext<'a>, expr: &'a ast::Expression)
                 }
                 ctx.function
                     .instruction(&lane_instruction(lane_instr, lane));
+            } else if let Some(shuffle) = ctx.intrinsics.find_shuffle(name) {
+                emit_expression(ctx, &params[0]);
+                emit_expression(ctx, &params[1]);
+                ctx.function
+                    .instruction(&shuffle_instruction(shuffle, &params[2..]));
             } else {
                 for param in params {
                     emit_expression(ctx, param);

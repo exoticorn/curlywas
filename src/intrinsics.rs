@@ -140,7 +140,6 @@ impl Intrinsics {
         self.inst("f32x4.splat", &[F32], Some(V128), I::F32x4Splat);
         self.inst("f64x2.splat", &[F64], Some(V128), I::F64x2Splat);
 
-        // skipped: i8x16.shuffle (requires special handling for 16 literal lane values)
         self.inst("i8x16.swizzle", &[V128, V128], Some(V128), I::I8x16Swizzle);
 
         self.inst("i8x16.add", &[V128, V128], Some(V128), I::I8x16Add);
@@ -446,10 +445,10 @@ impl Intrinsics {
     pub fn find_load_lane(&self, name: &str) -> Option<MemLaneInstruction> {
         use enc::Instruction as I;
         let ins = match name {
-            "v128.load8_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load8Lane { memarg: memarg, lane: lane }, 0, 0),
-            "v128.load16_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load16Lane { memarg: memarg, lane: lane }, 1, 1),
-            "v128.load32_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load32Lane { memarg: memarg, lane: lane }, 2, 2),
-            "v128.load64_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load64Lane { memarg: memarg, lane: lane }, 3, 3),
+            "v128.load8_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load8Lane { memarg: memarg, lane: lane }, 0, 16),
+            "v128.load16_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load16Lane { memarg: memarg, lane: lane }, 1, 8),
+            "v128.load32_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load32Lane { memarg: memarg, lane: lane }, 2, 4),
+            "v128.load64_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Load64Lane { memarg: memarg, lane: lane }, 3, 2),
             _ => return None,
         };
         return Some(ins);
@@ -477,10 +476,10 @@ impl Intrinsics {
     pub fn find_store_lane(&self, name: &str) -> Option<MemLaneInstruction> {
         use enc::Instruction as I;
         let ins = match name {
-            "v128.store8_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store8Lane { memarg: memarg, lane: lane }, 0, 0),
-            "v128.store16_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store16Lane { memarg: memarg, lane: lane }, 1, 1),
-            "v128.store32_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store32Lane { memarg: memarg, lane: lane }, 2, 2),
-            "v128.store64_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store64Lane { memarg: memarg, lane: lane }, 3, 3),
+            "v128.store8_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store8Lane { memarg: memarg, lane: lane }, 0, 16),
+            "v128.store16_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store16Lane { memarg: memarg, lane: lane }, 1, 8),
+            "v128.store32_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store32Lane { memarg: memarg, lane: lane }, 2, 4),
+            "v128.store64_lane" => MemLaneInstruction::new(|memarg, lane| I::V128Store64Lane { memarg: memarg, lane: lane }, 3, 2),
             _ => return None,
         };
         return Some(ins);
@@ -490,20 +489,29 @@ impl Intrinsics {
         use enc::Instruction as I;
         use Type::*;
         let ins = match name {
-            "i8x16.extract_lane_s" => LaneInstruction::new(None, I32, |lane| I::I8x16ExtractLaneS { lane: lane }, 0),
-            "i8x16.extract_lane_u" => LaneInstruction::new(None, I32, |lane| I::I8x16ExtractLaneU { lane: lane }, 0),
-            "i8x16.replace_lane" => LaneInstruction::new(Some(I32), V128, |lane| I::I8x16ReplaceLane { lane: lane }, 0),
-            "i16x8.extract_lane_s" => LaneInstruction::new(None, I32, |lane| I::I16x8ExtractLaneS { lane: lane }, 1),
-            "i16x8.extract_lane_u" => LaneInstruction::new(None, I32, |lane| I::I16x8ExtractLaneU { lane: lane }, 1),
-            "i16x8.replace_lane" => LaneInstruction::new(Some(I32), V128, |lane| I::I16x8ReplaceLane { lane: lane }, 1),
-            "i32x4.extract_lane" => LaneInstruction::new(None, I32, |lane| I::I32x4ExtractLane { lane: lane }, 2),
-            "i32x4.replace_lane" => LaneInstruction::new(Some(I32), V128, |lane| I::I32x4ReplaceLane { lane: lane }, 2),
-            "i64x2.extract_lane" => LaneInstruction::new(None, I64, |lane| I::I64x2ExtractLane { lane: lane }, 3),
-            "i64x2.replace_lane" => LaneInstruction::new(Some(I64), V128, |lane| I::I64x2ReplaceLane { lane: lane }, 3),
-            "f32x4.extract_lane" => LaneInstruction::new(None, F64, |lane| I::F32x4ExtractLane { lane: lane }, 2),
-            "f32x4.replace_lane" => LaneInstruction::new(Some(F64), V128, |lane| I::F32x4ReplaceLane { lane: lane }, 2),
-            "f64x2.extract_lane" => LaneInstruction::new(None, F64, |lane| I::F64x2ExtractLane { lane: lane }, 3),
-            "f64x2.replace_lane" => LaneInstruction::new(Some(F64), V128, |lane| I::F64x2ReplaceLane { lane: lane }, 3),
+            "i8x16.extract_lane_s" => LaneInstruction::new(None, I32, |lane| I::I8x16ExtractLaneS { lane: lane }, 16),
+            "i8x16.extract_lane_u" => LaneInstruction::new(None, I32, |lane| I::I8x16ExtractLaneU { lane: lane }, 16),
+            "i8x16.replace_lane" => LaneInstruction::new(Some(I32), V128, |lane| I::I8x16ReplaceLane { lane: lane }, 16),
+            "i16x8.extract_lane_s" => LaneInstruction::new(None, I32, |lane| I::I16x8ExtractLaneS { lane: lane }, 8),
+            "i16x8.extract_lane_u" => LaneInstruction::new(None, I32, |lane| I::I16x8ExtractLaneU { lane: lane }, 8),
+            "i16x8.replace_lane" => LaneInstruction::new(Some(I32), V128, |lane| I::I16x8ReplaceLane { lane: lane }, 8),
+            "i32x4.extract_lane" => LaneInstruction::new(None, I32, |lane| I::I32x4ExtractLane { lane: lane }, 4),
+            "i32x4.replace_lane" => LaneInstruction::new(Some(I32), V128, |lane| I::I32x4ReplaceLane { lane: lane }, 4),
+            "i64x2.extract_lane" => LaneInstruction::new(None, I64, |lane| I::I64x2ExtractLane { lane: lane }, 2),
+            "i64x2.replace_lane" => LaneInstruction::new(Some(I64), V128, |lane| I::I64x2ReplaceLane { lane: lane }, 2),
+            "f32x4.extract_lane" => LaneInstruction::new(None, F64, |lane| I::F32x4ExtractLane { lane: lane }, 4),
+            "f32x4.replace_lane" => LaneInstruction::new(Some(F64), V128, |lane| I::F32x4ReplaceLane { lane: lane }, 4),
+            "f64x2.extract_lane" => LaneInstruction::new(None, F64, |lane| I::F64x2ExtractLane { lane: lane }, 2),
+            "f64x2.replace_lane" => LaneInstruction::new(Some(F64), V128, |lane| I::F64x2ReplaceLane { lane: lane }, 2),
+            _ => return None,
+        };
+        return Some(ins);
+    }
+
+    pub fn find_shuffle(&self, name: &str) -> Option<ShuffleInstruction> {
+        use enc::Instruction as I;
+        let ins = match name {
+            "i8x16.shuffle" => ShuffleInstruction::new(|lanes| I::I8x16Shuffle { lanes: lanes }, 32),
             _ => return None,
         };
         return Some(ins);
@@ -533,19 +541,19 @@ impl MemInstruction {
 pub struct MemLaneInstruction {
     pub instruction: fn(MemArg, Lane) -> enc::Instruction<'static>,
     pub natural_alignment: u32,
-    pub lane_width: u32,
+    pub num_lanes: u32,
 }
 
 impl MemLaneInstruction {
     fn new(
         instruction: fn(MemArg, Lane) -> enc::Instruction<'static>,
         natural_alignment: u32,
-        lane_width: u32,
+        num_lanes: u32,
     ) -> MemLaneInstruction {
         MemLaneInstruction {
             instruction,
             natural_alignment,
-            lane_width
+            num_lanes
         }
     }
 }
@@ -554,7 +562,7 @@ pub struct LaneInstruction {
     pub param_type: Option<Type>,
     pub return_type: Type,
     pub instruction: fn(Lane) -> enc::Instruction<'static>,
-    pub lane_width: u32,
+    pub num_lanes: u32,
 }
 
 impl LaneInstruction {
@@ -562,13 +570,30 @@ impl LaneInstruction {
         param_type: Option<Type>,
         return_type: Type,
         instruction: fn(Lane) -> enc::Instruction<'static>,
-        lane_width: u32,
+        num_lanes: u32,
     ) -> LaneInstruction {
         LaneInstruction {
             param_type,
             return_type,
             instruction,
-            lane_width,
+            num_lanes,
+        }
+    }
+}
+
+pub struct ShuffleInstruction {
+    pub instruction: fn([Lane; 16]) -> enc::Instruction<'static>,
+    pub num_lanes: u32,
+}
+
+impl ShuffleInstruction {
+    fn new(
+        instruction: fn([Lane; 16]) -> enc::Instruction<'static>,
+        num_lanes: u32,
+    ) -> ShuffleInstruction {
+        ShuffleInstruction {
+            instruction,
+            num_lanes,
         }
     }
 }
