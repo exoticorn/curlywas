@@ -189,13 +189,13 @@ impl Intrinsics {
         self.inst("i32x4.extadd_pairwise_i16x8_s", &[V128], Some(V128), I::I32x4ExtAddPairwiseI16x8S);
         self.inst("i32x4.extadd_pairwise_i16x8_u", &[V128], Some(V128), I::I32x4ExtAddPairwiseI16x8U);
 
-        self.inst("i8x16.add_sat_s", &[V128, V128], Some(V128), I::I16x8AddSatS);
-        self.inst("i8x16.add_sat_u", &[V128, V128], Some(V128), I::I16x8AddSatU);
+        self.inst("i8x16.add_sat_s", &[V128, V128], Some(V128), I::I8x16AddSatS);
+        self.inst("i8x16.add_sat_u", &[V128, V128], Some(V128), I::I8x16AddSatU);
         self.inst("i16x8.add_sat_s", &[V128, V128], Some(V128), I::I16x8AddSatS);
         self.inst("i16x8.add_sat_u", &[V128, V128], Some(V128), I::I16x8AddSatU);
 
-        self.inst("i8x16.sub_sat_s", &[V128, V128], Some(V128), I::I16x8SubSatS);
-        self.inst("i8x16.sub_sat_u", &[V128, V128], Some(V128), I::I16x8SubSatU);
+        self.inst("i8x16.sub_sat_s", &[V128, V128], Some(V128), I::I8x16SubSatS);
+        self.inst("i8x16.sub_sat_u", &[V128, V128], Some(V128), I::I8x16SubSatU);
         self.inst("i16x8.sub_sat_s", &[V128, V128], Some(V128), I::I16x8SubSatS);
         self.inst("i16x8.sub_sat_u", &[V128, V128], Some(V128), I::I16x8SubSatU);
 
@@ -247,7 +247,7 @@ impl Intrinsics {
         self.inst("i64x2.shr_s", &[V128, I32], Some(V128), I::I64x2ShrS);
         self.inst("i64x2.shr_u", &[V128, I32], Some(V128), I::I64x2ShrU);
 
-        self.inst("v128.and", &[V128, V128], Some(V128), I::V128Not);
+        self.inst("v128.and", &[V128, V128], Some(V128), I::V128And);
         self.inst("v128.or", &[V128, V128], Some(V128), I::V128Or);
         self.inst("v128.xor", &[V128, V128], Some(V128), I::V128Xor);
         self.inst("v128.not", &[V128], Some(V128), I::V128Not);
@@ -499,8 +499,8 @@ impl Intrinsics {
             "i32x4.replace_lane" => LaneInstruction::new(Some(I32), V128, |lane| I::I32x4ReplaceLane { lane: lane }, 4),
             "i64x2.extract_lane" => LaneInstruction::new(None, I64, |lane| I::I64x2ExtractLane { lane: lane }, 2),
             "i64x2.replace_lane" => LaneInstruction::new(Some(I64), V128, |lane| I::I64x2ReplaceLane { lane: lane }, 2),
-            "f32x4.extract_lane" => LaneInstruction::new(None, F64, |lane| I::F32x4ExtractLane { lane: lane }, 4),
-            "f32x4.replace_lane" => LaneInstruction::new(Some(F64), V128, |lane| I::F32x4ReplaceLane { lane: lane }, 4),
+            "f32x4.extract_lane" => LaneInstruction::new(None, F32, |lane| I::F32x4ExtractLane { lane: lane }, 4),
+            "f32x4.replace_lane" => LaneInstruction::new(Some(F32), V128, |lane| I::F32x4ReplaceLane { lane: lane }, 4),
             "f64x2.extract_lane" => LaneInstruction::new(None, F64, |lane| I::F64x2ExtractLane { lane: lane }, 2),
             "f64x2.replace_lane" => LaneInstruction::new(Some(F64), V128, |lane| I::F64x2ReplaceLane { lane: lane }, 2),
             _ => return None,
