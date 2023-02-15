@@ -164,12 +164,12 @@ impl Intrinsics {
 
         self.inst("i32x4.dot_i16x8_s", &[V128, V128], Some(V128), I::I32x4DotI16x8S);
 
-        self.inst("i8x16.neg", &[V128, V128], Some(V128), I::I8x16Neg);
-        self.inst("i16x8.neg", &[V128, V128], Some(V128), I::I16x8Neg);
-        self.inst("i32x4.neg", &[V128, V128], Some(V128), I::I32x4Neg);
-        self.inst("i64x2.neg", &[V128, V128], Some(V128), I::I64x2Neg);
-        self.inst("f32x4.neg", &[V128, V128], Some(V128), I::F32x4Neg);
-        self.inst("f64x2.neg", &[V128, V128], Some(V128), I::F64x2Neg);
+        self.inst("i8x16.neg", &[V128], Some(V128), I::I8x16Neg);
+        self.inst("i16x8.neg", &[V128], Some(V128), I::I16x8Neg);
+        self.inst("i32x4.neg", &[V128], Some(V128), I::I32x4Neg);
+        self.inst("i64x2.neg", &[V128], Some(V128), I::I64x2Neg);
+        self.inst("f32x4.neg", &[V128], Some(V128), I::F32x4Neg);
+        self.inst("f64x2.neg", &[V128], Some(V128), I::F64x2Neg);
 
         self.inst("i16x8.extmul_low_i8x16_s", &[V128, V128], Some(V128), I::I16x8ExtMulLowI8x16S);
         self.inst("i16x8.extmul_high_i8x16_s", &[V128, V128], Some(V128), I::I16x8ExtMulHighI8x16S);
