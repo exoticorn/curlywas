@@ -319,7 +319,8 @@ fn fold_expr(context: &Context, expr: &mut ast::Expression) {
         ast::Expr::I32Const(_)
         | ast::Expr::I64Const(_)
         | ast::Expr::F32Const(_)
-        | ast::Expr::F64Const(_) => (),
+        | ast::Expr::F64Const(_)
+        | ast::Expr::V128Const(_) => (),
         ast::Expr::Variable { ref name, .. } => {
             if let Some(value) = context.consts.get(name) {
                 expr.expr = value.clone();

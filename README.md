@@ -66,12 +66,13 @@ include "platform_imports.cwa"
 
 ### Types
 
-There are four types in WebAssembly and therefore CurlyWas:
+There are five types in WebAssembly and therefore CurlyWas:
 
 * `i32`: 32bit integer
 * `i64`: 64bit integer
 * `f32`: 32bit float
 * `f64`: 64bit float
+* `v128`: 128bit vector
 
 There are no unsigned types, but there are unsigned operators where it makes a difference.
 
@@ -81,6 +82,12 @@ Integer numbers can be given either in decimal or hex:
 
 ```
 123, -7878, 0xf00
+```
+
+64 or 128-bit integers are denoted using `i64` or `i128`:
+
+```
+0xabc0i64, 8i128
 ```
 
 For floating point numbers, only the most basic decimal format is currently implemented (no scientific notation or hex-floats, yet):
@@ -399,6 +406,27 @@ And binary files:
 file("font.bin")
 ```
 
+#### SIMD
+
+Intrinsics are available for all WASM SIMD instructions, except for the relaxed SIMD extensions.
+For instructions that refer to lanes, i.e. `*.extract_lane*`, `*.replace_lane`, `v128.store*_lane`, and
+`v128.load*_lane`, the lane number follows the vector argument. For example:
+
+```
+v128.store32_lane(<v128_value>, <lane>, <base-address>[, <offset>, [<align>]]);
+v128.load32_splat(<v128_value>, <lane>, <base-address>[, <offset>, [<align>]]);
+i32x4.extract_lane(<v128_value>, <lane>);
+i32x4.replace_lane(<v128_value>, <lane>, <i32_value>);
+```
+
+The format for `i8x16.shuffle` is:
+
+```
+i8x16.shuffle(<v128_a>, <v128_b>, [<lane_0>[, <lane_1>[, ... <lane_16>]]])
+```
+
+Omitted lane arguments default to their index, so providing no lane arguments simply returns the value of `<v128_a>`.
+
 #### Advanced sequencing
 
 Sometimes when sizeoptimizing it helps to be able to execute some side-effecty code in the middle an expression.
@@ -430,7 +458,6 @@ The idea of CurlyWas is to be able to hand-craft any valid WASM program, ie. hav
 
 This goal is not yet fully reached, with the following being the main limitations:
 
-* CurlyWas currently only targets MVP web assembly + non-trapping float-to-int conversions. No other post-MVP features are currently supported. Especially "Multi-value" will be problematic as this allows programs that don't map cleanly to an expression tree.
-* Memory intrinsics are still missing, so only (unsigned) 8 and 32 bit integer reads and writes are possible.
+* CurlyWas currently only targets MVP web assembly + non-trapping float-to-int conversions + SIMD. No other post-MVP features are currently supported. Especially "Multi-value" will be problematic as this allows programs that don't map cleanly to an expression tree.
 * `block`s cannot return values, as the branch instructions are missing syntax to pass along a value.
 * `br_table` and `call_indirect` are not yet implemented.

@@ -177,6 +177,7 @@ pub enum DataType {
     I16,
     I32,
     I64,
+    I128,
     F32,
     F64,
 }
@@ -208,6 +209,13 @@ impl Expression {
         match self.expr {
             Expr::I64Const(v) => v,
             _ => panic!("Expected I64Const"),
+        }
+    }
+
+    pub fn const_v128(&self) -> i128 {
+        match self.expr {
+            Expr::V128Const(v) => v,
+            _ => panic!("Expected V128Const"),
         }
     }
 
@@ -243,6 +251,7 @@ pub enum Expr {
     I64Const(i64),
     F32Const(f32),
     F64Const(f64),
+    V128Const(i128),
     Variable {
         name: String,
         local_id: Option<u32>,
@@ -382,15 +391,17 @@ pub enum Type {
     I64,
     F32,
     F64,
+    V128
 }
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Type::I32 => write!(f, "i32"),
-            Type::I64 => write!(f, "i64"),
-            Type::F32 => write!(f, "f32"),
-            Type::F64 => write!(f, "f64"),
+            Type::I32  => write!(f, "i32"),
+            Type::I64  => write!(f, "i64"),
+            Type::F32  => write!(f, "f32"),
+            Type::F64  => write!(f, "f64"),
+            Type::V128 => write!(f, "v128"),
         }
     }
 }

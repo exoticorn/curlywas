@@ -79,6 +79,7 @@ enum Token {
     Str(String),
     Int(i32),
     Int64(i64),
+    Int128(i128),
     IntFloat(i32),
     Float(String),
     Float64(String),
@@ -108,6 +109,7 @@ impl fmt::Display for Token {
             Token::Str(s) => write!(f, "{:?}", s),
             Token::Int(v) => write!(f, "{}", v),
             Token::Int64(v) => write!(f, "{}", v),
+            Token::Int128(v) => write!(f, "{}", v),
             Token::IntFloat(v) => write!(f, "{}_f", v),
             Token::Float(v) => write!(f, "{}", v),
             Token::Float64(v) => write!(f, "{}", v),
@@ -264,10 +266,10 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
     let integer = just::<_, _, LexerError>("0x")
         .ignore_then(text::digits(16))
         .try_map(|n, span| {
-            u64::from_str_radix(&n, 16).map_err(|err| LexerError::custom(span, err.to_string()))
+            u128::from_str_radix(&n, 16).map_err(|err| LexerError::custom(span, err.to_string()))
         })
         .or(text::digits(10).try_map(|n: String, span: Span| {
-            n.parse::<u64>()
+            n.parse::<u128>()
                 .map_err(|err| LexerError::custom(span, err.to_string()))
         }))
         .boxed();
@@ -276,6 +278,11 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
         .clone()
         .then_ignore(just("i64"))
         .map(|n| Token::Int64(n as i64));
+
+    let int128 = integer
+        .clone()
+        .then_ignore(just("i128"))
+        .map(|n| Token::Int128(n as i128));
 
     let int_float = integer
         .clone()
@@ -378,7 +385,7 @@ fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = LexerError> {
     let comment = single_line.or(multi_line);
 
     let token = choice((
-        float, float64, int64, int_float, int, str_, char_, op, ctrl, ident,
+        float, float64, int64, int128, int_float, int, str_, char_, op, ctrl, ident,
     ))
     .recover_with(skip_then_retry_until([]));
 
@@ -484,6 +491,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             let val = map_token(|tok, span| match tok {
                 Token::Int(v) => Some(ast::Expr::I32Const(*v)),
                 Token::Int64(v) => Some(ast::Expr::I64Const(*v)),
+                Token::Int128(v) => Some(ast::Expr::V128Const(*v)),
                 Token::IntFloat(v) => Some(ast::Expr::Cast {
                     value: Box::new(ast::Expr::I32Const(*v).with_span(span.clone())),
                     type_: ast::Type::F32,
@@ -1091,6 +1099,7 @@ fn script_parser() -> impl Parser<Token, ast::Script, Error = ScriptError> + Clo
             .or(just(Token::Ident("i16".to_string())).to(ast::DataType::I16))
             .or(just(Token::Ident("i32".to_string())).to(ast::DataType::I32))
             .or(just(Token::Ident("i64".to_string())).to(ast::DataType::I64))
+            .or(just(Token::Ident("i128".to_string())).to(ast::DataType::I128))
             .or(just(Token::Ident("f32".to_string())).to(ast::DataType::F32))
             .or(just(Token::Ident("f64".to_string())).to(ast::DataType::F64))
             .then(
@@ -1167,6 +1176,7 @@ fn type_parser() -> impl Parser<Token, ast::Type, Error = ScriptError> + Clone {
         Token::Ident(id) if id == "i64" => Ok(ast::Type::I64),
         Token::Ident(id) if id == "f32" => Ok(ast::Type::F32),
         Token::Ident(id) if id == "f64" => Ok(ast::Type::F64),
+        Token::Ident(id) if id == "v128" => Ok(ast::Type::V128),
         _ => Err(ScriptError::expected_input_found(
             span,
             vec![
@@ -1174,6 +1184,7 @@ fn type_parser() -> impl Parser<Token, ast::Type, Error = ScriptError> + Clone {
                 Some(Token::Ident("i64".into())),
                 Some(Token::Ident("f32".into())),
                 Some(Token::Ident("f64".into())),
+                Some(Token::Ident("v128".into())),
             ],
             Some(tok),
         )),
